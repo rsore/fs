@@ -27,5 +27,10 @@ main(void)
 
     fs_walker_free(&walker);
 
+    /* uint32_t error; uint64_t sys_error; */
+    /* if ((error = fs_delete_tree("test - Copy", &sys_error)) != FS_ERROR_NONE) { */
+    /*     printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error)); */
+    /* } */
+
     return 0;
 }

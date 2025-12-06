@@ -61,6 +61,20 @@ typedef struct {
 FSAPI void fs_file_info_free(FsFileInfo *f);
 
 
+/**
+ * Recursively delete a directory tree at `root`.
+ *
+ * Returns an FS_ERROR_* code:
+ *   - FS_ERROR_NONE           on success
+ *   - FS_ERROR_ACCESS_DENIED  if unlink/rmdir/DeleteFile/RemoveDirectory fails with permission errors
+ *   - FS_ERROR_FILE_NOT_FOUND if root does not exist
+ *   - FS_ERROR_OUT_OF_MEMORY  if allocations fail
+ *   - FS_ERROR_GENERIC        for all other failures
+ *
+ * If sys_error_out != NULL:
+ *   *sys_error_out = the underlying errno or GetLastError(), or 0 on OOM.
+ */
+FSAPI uint32_t fs_delete_tree(const char *root, uint64_t *sys_error_out);
 
 /**
  * FsWalker is used to walk a file-structure tree from
@@ -206,6 +220,7 @@ FSAPI char *fs_strerror(uint32_t err);
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 // Ensure lstat is declared even in strict C modes
 struct stat;
@@ -483,14 +498,6 @@ fs_walker_cleanup_(FsWalker *w)
     w->yielded_root = 0;
 }
 
-FSAPI void
-fs_file_info_free(FsFileInfo *f)
-{
-    if (!f) return;
-    free(f->path);
-    memset(f, 0, sizeof *f);
-}
-
 #ifdef _WIN32
 static uint64_t
 fs_filetime_to_unix_seconds_(FILETIME ft)
@@ -504,6 +511,112 @@ fs_filetime_to_unix_seconds_(FILETIME ft)
     return (t.QuadPart / 10000000ULL) - EPOCH_DIFF;
 }
 #endif
+
+FSAPI void
+fs_file_info_free(FsFileInfo *f)
+{
+    if (!f) return;
+    free(f->path);
+    memset(f, 0, sizeof *f);
+}
+
+FSAPI uint32_t
+fs_delete_tree(const char *root, uint64_t *sys_error_out)
+{
+    uint32_t err = FS_ERROR_NONE;
+    uint64_t sys_err = 0;
+
+    FsWalker w = {0};
+    if (!fs_walker_init(&w, root)) {
+        if (sys_error_out) *sys_error_out = w.sys_error;
+        return w.error;
+    }
+
+    char **dirs = NULL;
+    size_t ndirs = 0, cap = 0;
+
+    const FsFileInfo *fi;
+    while ((fi = fs_walker_next(&w))) {
+        if (fi->is_symlink) {
+            // Delete symlink itself
+#ifdef _WIN32
+            if (!DeleteFileA(fi->path)) {
+                err |= FS_ERROR_GENERIC;
+                sys_err = GetLastError();
+            }
+#else
+            if (unlink(fi->path) != 0) {
+                err |= fs_map_errno_(errno);
+                sys_err = errno;
+            }
+#endif
+            continue;
+        }
+
+        if (!fi->is_dir) {
+            // Delete file immediately
+#ifdef _WIN32
+            if (!DeleteFileA(fi->path)) {
+                err |= fs_map_win32_error_(GetLastError());
+                sys_err = GetLastError();
+            }
+#else
+            if (unlink(fi->path) != 0) {
+                err |= fs_map_errno_(errno);
+                sys_err = errno;
+            }
+#endif
+        } else {
+            // Store for later
+            if (ndirs == cap) {
+                size_t new_cap = cap ? cap*2 : 16;
+                char **tmp = realloc(dirs, new_cap * sizeof(*tmp));
+                if (!tmp) {
+                    err |= FS_ERROR_OUT_OF_MEMORY;
+                    sys_err = 0;
+                    break;
+                }
+                dirs = tmp;
+                cap  = new_cap;
+            }
+            dirs[ndirs++] = fs_strdup_(fi->path);
+            if (!dirs[ndirs - 1]) {
+                err |= FS_ERROR_OUT_OF_MEMORY;
+                sys_err = 0;
+                break;
+            }
+        }
+    }
+
+    if (w.has_error) {
+        err |= w.error;
+        sys_err = w.sys_error;
+    }
+
+    // Delete directories in reverse order
+    for (size_t i = ndirs; i > 0; --i) {
+        char *d = dirs[i - 1];
+#ifdef _WIN32
+        if (!RemoveDirectoryA(d)) {
+            err |= fs_map_win32_error_(GetLastError());
+            sys_err = GetLastError();
+        }
+#else
+        if (rmdir(d) != 0) {
+            err |= fs_map_errno_(errno);
+            sys_err = errno;
+        }
+#endif
+        free(d);
+    }
+
+    free(dirs);
+    fs_walker_free(&w);
+
+    if (sys_error_out) *sys_error_out = sys_err;
+
+    return err;
+}
 
 FSAPI int
 fs_walker_init(FsWalker *w, const char *root)
