@@ -1,0 +1,801 @@
+#ifndef FS_H_INCLUDED_
+#define FS_H_INCLUDED_
+
+#include <stddef.h>
+#include <stdint.h>
+
+/**
+ * FSAPI is an optional user-defined preprocessor definition.
+ * It may be defined before including fs.h and will be prefixed
+ * to all functions in the public API of fs.h.
+ * For example `#define FSAPI static inline` may be useful if
+ * fs.h is intended to be used only inside a single translation
+ * unit.
+ */
+#ifndef FSAPI
+#    define FSAPI
+#endif
+
+
+/**
+ * FS_WIN32_USE_FORWARDSLASH_SEPARATORS can be defined in the same translation
+ * unit that includes the fs.h implementations, to override the default behavior
+ * of using '\' separators to instead use '/' separators.
+ */
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+#define FS_MODE_READONLY  0x0001u
+#define FS_MODE_HIDDEN    0x0002u
+#define FS_MODE_SYSTEM    0x0004u
+
+#define FS_ERROR_NONE           0x0000u
+#define FS_ERROR_GENERIC        0x0001u
+#define FS_ERROR_ACCESS_DENIED  0x0002u
+#define FS_ERROR_OUT_OF_MEMORY  0x0004u
+#define FS_ERROR_FILE_NOT_FOUND 0x0008u
+
+/**
+ * FsFileInfo is a simple POD and can be initialized
+ * with {0} (or {} in C++), but should be freed with
+ * fs_file_info_free.
+ */
+typedef struct {
+    char *path;         // Dynamically allocated, freed by fs_file_info_free()
+
+    int is_dir;         // non-zero if entry is a directory.
+    int is_symlink;     // non-zero if entry is a symbolic link / reparse point.
+
+    uint64_t size;      // File size in bytes
+    uint64_t mtime_sec; // Last modification time (seconds since epoch)
+    uint32_t mode;      // Bitfield of FS_MODE_* values
+} FsFileInfo;
+
+/**
+ * Cleanup all internal resources. Safe to call multiple times.
+ */
+FSAPI void fs_file_info_free(FsFileInfo *f);
+
+
+
+/**
+ * FsWalker is used to walk a file-structure tree from
+ * a root directory, retrieving an FsFileInfo object
+ * for each entry.
+ *
+ * The walker performs a depth-first, pre-order traversal.
+ *
+ * On both Windows and POSIX, symbolic links / reparse-point directories
+ * are not traversed into. They are reported as entries with is_symlink != 0,
+ * but no recursion occurs into their targets.
+ *
+ * Example usage:
+ *
+ *    FsWalker walker = {0};
+ *    if (!fs_walker_init(&walker, "root_directory/")) {
+ *        // handle initialization failure (walker.has_error, walker.error, walker.sys_error)
+ *        return;
+ *    }
+ *
+ *    const FsFileInfo *fi;
+ *    while ((fi = fs_walker_next(&walker))) {
+ *        if (!fi->is_dir && !fi->is_symlink) {
+ *            printf("Filepath: %s\n", fi->path);
+ *        }
+ *        // No per-iteration free; the walker owns fi->path.
+ *    }
+ *
+ *    if (walker.has_error) {
+ *        // distinguish "finished" vs "error" after loop:
+ *        // walker.error has FS_ERROR_* bits, walker.sys_error has errno/GetLastError()
+ *    }
+ *
+ *    fs_walker_free(&walker);
+ */
+typedef struct FsWalker {
+#ifdef _WIN32
+    struct FsWalkerFrameWin   *frames;
+#else
+    struct FsWalkerFramePosix *frames;
+#endif
+    size_t len;
+    size_t cap;
+
+    FsFileInfo root_info;
+    FsFileInfo current;
+
+    int yielded_root;
+
+    int         has_error;
+    uint32_t    error;      // FS_ERROR_* bits
+    uint64_t    sys_error;  // errno or GetLastError(), implementation detail
+} FsWalker;
+
+/**
+ * Initialize a walker rooted at `root`. Does not traverse yet.
+ *
+ * The FsWalker `w` should be zero-initialized (e.g. FsWalker w = {0};) or
+ * previously cleaned with fs_walker_free().
+ *
+ * On success:
+ *  - returns 1
+ *  - w->has_error == 0
+ *  - w->error     == FS_ERROR_NONE
+ *
+ * On failure:
+ *  - returns 0
+ *  - w->has_error != 0
+ *  - w->error     contains one or more FS_ERROR_* bits
+ *  - w->sys_error contains the underlying errno (POSIX) or GetLastError()
+ *    value (Windows), or 0 for pure allocation failures.
+ *
+ * A failed walker must not be used with fs_walker_next(), but
+ * fs_walker_free() is still safe.
+ */
+FSAPI int fs_walker_init(FsWalker *w, const char *root);
+
+/**
+ * Advance the walker and return the next entry.
+ *
+ * On success:
+ *  - returns a non-NULL pointer to an internal FsFileInfo owned by `w`.
+ *  - The returned pointer is valid until the next call to fs_walker_next(w)
+ *    or until fs_walker_free(w) is called.
+ *  - The caller must NOT call fs_file_info_free() on the returned pointer.
+ *
+ * When traversal is finished (no more entries):
+ *  - returns NULL
+ *  - w->has_error == 0
+ *  - w->error     == FS_ERROR_NONE
+ *
+ * On error:
+ *  - returns NULL
+ *  - w->has_error != 0
+ *  - w->error     contains one or more FS_ERROR_* bits
+ *  - w->sys_error contains errno / GetLastError(), or 0 for pure allocation failures
+ *  - the walker has been cleaned up internally and must not be reused
+ *    (but fs_walker_free() is still safe).
+ *
+ * In both "finished" and "error" cases fs_walker_next() returns NULL; the
+ * caller must inspect w->has_error (or w->error) to distinguish them.
+ */
+FSAPI FsFileInfo *fs_walker_next(FsWalker *w);
+
+/**
+ * Cleanup all internal resources associated with the walker.
+ *
+ * Safe to call on:
+ *  - a zero-initialized FsWalker,
+ *  - after a successful traversal,
+ *  - after fs_walker_init() failure,
+ *  - or after an error reported by fs_walker_next().
+ *
+ * Safe to call multiple times.
+ */
+FSAPI void fs_walker_free(FsWalker *w);
+
+
+/**
+ * Return string description of error `err`
+ */
+FSAPI char *fs_strerror(uint32_t err);
+
+#ifdef __cplusplus
+}
+#endif
+
+
+
+/**
+ * Implementation details follows
+ */
+#ifdef FS_IMPLEMENTATION
+
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
+#include <errno.h>
+#include <sys/stat.h>
+
+// Ensure lstat is declared even in strict C modes
+struct stat;
+int lstat(const char *path, struct stat *buf);
+#endif
+
+#ifdef _WIN32
+typedef struct FsWalkerFrameWin {
+    HANDLE            handle;
+    WIN32_FIND_DATAA  data;
+    char             *dir_path; // malloc'ed
+    int               first;    // 1 = use 'data' from FindFirstFileA
+} FsWalkerFrameWin;
+#else
+typedef struct FsWalkerFramePosix {
+    DIR  *dir;
+    char *dir_path;  // malloc'ed
+} FsWalkerFramePosix;
+#endif
+
+
+static inline char *
+fs_strdup_(const char *s)
+{
+    size_t n = strlen(s) + 1;
+    char *p = (char *)malloc(n);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    return p;
+}
+
+static inline int
+fs_is_sep_(char c)
+{
+#ifdef _WIN32
+    return c == '\\' || c == '/';
+#else
+    return c == '/';
+#endif
+}
+
+
+#if defined(_WIN32) && !defined(FS_WIN32_USE_FORWARDSLASH_SEPARATORS)
+#    define FS_PATH_SEP '\\'
+#else
+#    define FS_PATH_SEP '/'
+#endif
+
+static inline char *
+fs_join_(const char *a, const char *b)
+{
+    size_t la = strlen(a);
+    size_t lb = strlen(b);
+
+    int need_sep = 1;
+    if (la == 0) {
+        need_sep = 0;
+    } else if (fs_is_sep_(a[la - 1])) {
+        // a already ends with '/' or '\' (both count on Windows)
+        need_sep = 0;
+    }
+
+    size_t len = la + (need_sep ? 1 : 0) + lb + 1;
+    char *p = (char *)malloc(len);
+    if (!p) return NULL;
+
+    if (need_sep) {
+        snprintf(p, len, "%s%c%s", a, FS_PATH_SEP, b);
+    } else {
+        snprintf(p, len, "%s%s", a, b);
+    }
+
+    return p;
+}
+
+static inline void
+fs_normalize_seps_(char *p)
+{
+#ifdef _WIN32
+    if (!p) return;
+    for (; *p; ++p) {
+        if (*p == '/' || *p == '\\') {
+            *p = FS_PATH_SEP;
+        }
+    }
+#else
+    (void)p; // no-op on POSIX
+#endif
+}
+
+#ifdef _WIN32
+static uint32_t
+fs_map_win32_error_(DWORD err)
+{
+    switch (err) {
+    case ERROR_ACCESS_DENIED:
+        return FS_ERROR_ACCESS_DENIED;
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+    case ERROR_INVALID_DRIVE:
+        return FS_ERROR_FILE_NOT_FOUND;
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+        return FS_ERROR_OUT_OF_MEMORY;
+    default:
+        return FS_ERROR_GENERIC;
+    }
+}
+#else
+static uint32_t
+fs_map_errno_(int e)
+{
+    switch (e) {
+    case EACCES:
+    case EPERM:
+        return FS_ERROR_ACCESS_DENIED;
+    case ENOENT:
+    case ENOTDIR:
+        return FS_ERROR_FILE_NOT_FOUND;
+    case ENOMEM:
+        return FS_ERROR_OUT_OF_MEMORY;
+    default:
+        return FS_ERROR_GENERIC;
+    }
+}
+#endif
+
+
+#ifdef _WIN32
+static void
+fs_walker_set_sys_error_(FsWalker *w, DWORD err)
+{
+    w->has_error = 1;
+    w->sys_error = (uint64_t)err;
+    w->error    |= fs_map_win32_error_(err);
+}
+#else
+static void
+fs_walker_set_sys_error_(FsWalker *w, int e)
+{
+    w->has_error = 1;
+    w->sys_error = (uint64_t)e;
+    w->error    |= fs_map_errno_(e);
+}
+#endif
+
+static void
+fs_walker_set_oom_error_(FsWalker *w)
+{
+    w->has_error = 1;
+    w->error    |= FS_ERROR_OUT_OF_MEMORY;
+    // leave sys_error as 0 or set to a convention (e.g. ENOMEM)
+}
+
+// Grow frame stack if necessary to fit needed
+static inline int
+fs_walker_ensure_cap_(FsWalker *w, size_t needed)
+{
+    if (w->cap >= needed) return 1;
+    size_t new_cap = w->cap ? w->cap * 2 : 8;
+    if (new_cap < needed) new_cap = needed;
+
+#ifdef _WIN32
+    FsWalkerFrameWin *nf = (FsWalkerFrameWin *)realloc(w->frames, new_cap * sizeof(FsWalkerFrameWin));
+#else
+    FsWalkerFramePosix *nf = (FsWalkerFramePosix *)realloc(w->frames, new_cap * sizeof(FsWalkerFramePosix));
+#endif
+    if (!nf) return 0;
+    w->frames = nf;
+    w->cap    = new_cap;
+    return 1;
+}
+
+// push a frame for a directory (may succeed without pushing if empty on Windows)
+static int
+fs_walker_push_frame_(FsWalker *w, const char *dir_path)
+{
+#ifdef _WIN32
+    size_t  len     = strlen(dir_path);
+    size_t  patlen  = len + 2 + 1; // dir + '\' + '*' + '\0'
+    char   *pattern = (char *)malloc(patlen);
+    if (!pattern) {
+        fs_walker_set_oom_error_(w);
+        return 0;
+    }
+    snprintf(pattern, patlen, "%s\\*", dir_path);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE           h = FindFirstFileA(pattern, &fd);
+    free(pattern);
+
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND) {
+            // Empty directory; not an error
+            return 1;
+        }
+        fs_walker_set_sys_error_(w, err);
+        return 0;
+    }
+
+    if (!fs_walker_ensure_cap_(w, w->len + 1)) {
+        FindClose(h);
+        fs_walker_set_oom_error_(w);
+        return 0;
+    }
+
+    FsWalkerFrameWin *f = &w->frames[w->len++];
+    f->handle   = h;
+    f->data     = fd;
+    f->dir_path = fs_strdup_(dir_path);
+    f->first    = 1;
+    if (!f->dir_path) {
+        FindClose(h);
+        w->len -= 1;
+        fs_walker_set_oom_error_(w);
+        return 0;
+    }
+    return 1;
+
+#else
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        fs_walker_set_sys_error_(w, errno);
+        return 0;
+    }
+
+    if (!fs_walker_ensure_cap_(w, w->len + 1)) {
+        fs_walker_set_oom_error_(w);
+        closedir(dir);
+        return 0;
+    }
+
+    FsWalkerFramePosix *f = &w->frames[w->len++];
+    f->dir      = dir;
+    f->dir_path = fs_strdup_(dir_path);
+    if (!f->dir_path) {
+        closedir(dir);
+        w->len -= 1;
+        fs_walker_set_oom_error_(w);
+        return 0;
+    }
+    return 1;
+#endif
+}
+
+static inline void
+fs_walker_cleanup_(FsWalker *w)
+{
+    if (!w) return;
+
+#ifdef _WIN32
+    for (size_t i = 0; i < w->len; ++i) {
+        FsWalkerFrameWin *f = &w->frames[i];
+        if (f->handle != INVALID_HANDLE_VALUE && f->handle != NULL) {
+            FindClose(f->handle);
+        }
+        free(f->dir_path);
+    }
+#else
+    for (size_t i = 0; i < w->len; ++i) {
+        FsWalkerFramePosix *f = &w->frames[i];
+        if (f->dir) closedir(f->dir);
+        free(f->dir_path);
+    }
+#endif
+
+    free(w->frames);
+    w->frames = NULL;
+    w->len    = w->cap = 0;
+
+    fs_file_info_free(&w->root_info);
+    fs_file_info_free(&w->current);
+
+    w->yielded_root = 0;
+}
+
+FSAPI void
+fs_file_info_free(FsFileInfo *f)
+{
+    if (!f) return;
+    free(f->path);
+    memset(f, 0, sizeof *f);
+}
+
+#ifdef _WIN32
+static uint64_t
+fs_filetime_to_unix_seconds_(FILETIME ft)
+{
+    ULARGE_INTEGER t;
+    t.HighPart = ft.dwHighDateTime;
+    t.LowPart  = ft.dwLowDateTime;
+
+    // FILETIME is 100-ns intervals since 1601-01-01 UTC
+    const uint64_t EPOCH_DIFF = 11644473600ULL; // seconds between 1601 and 1970
+    return (t.QuadPart / 10000000ULL) - EPOCH_DIFF;
+}
+#endif
+
+FSAPI int
+fs_walker_init(FsWalker *w, const char *root)
+{
+    if (!w || !root) return 0;
+    memset(w, 0, sizeof *w);
+
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(root, GetFileExInfoStandard, &fad)) {
+        fs_walker_set_sys_error_(w, GetLastError());
+        fs_walker_cleanup_(w);
+        return 0;
+    }
+
+    FsFileInfo *ri = &w->root_info;
+    memset(ri, 0, sizeof *ri);
+
+    ri->is_dir     = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)     != 0;
+    ri->is_symlink = (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+    ULARGE_INTEGER sz;
+    sz.HighPart = fad.nFileSizeHigh;
+    sz.LowPart  = fad.nFileSizeLow;
+    ri->size    = (uint64_t)sz.QuadPart;
+
+    ri->mtime_sec = fs_filetime_to_unix_seconds_(fad.ftLastWriteTime);
+
+    ri->mode = 0;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ri->mode |= FS_MODE_READONLY;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)   ri->mode |= FS_MODE_HIDDEN;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)   ri->mode |= FS_MODE_SYSTEM;
+
+    // If it's a real directory (not a symlink/junction), push a frame
+    if (ri->is_dir && !ri->is_symlink) {
+        if (!fs_walker_push_frame_(w, root)) {
+            fs_walker_cleanup_(w);
+            return 0;
+        }
+    }
+
+    ri->path = fs_strdup_(root);
+    if (!ri->path) {
+        fs_walker_set_oom_error_(w);
+        fs_walker_cleanup_(w);
+        return 0;
+    }
+    fs_normalize_seps_(ri->path);
+
+#else
+    struct stat st;
+    if (lstat(root, &st) < 0) {
+        fs_walker_set_sys_error_(w, errno);
+        fs_walker_cleanup_(w);
+        return 0;
+    }
+
+    FsFileInfo *ri = &w->root_info;
+    memset(ri, 0, sizeof *ri);
+
+    ri->is_dir     = S_ISDIR(st.st_mode) != 0;
+    ri->is_symlink = S_ISLNK(st.st_mode) != 0;
+    ri->size       = (uint64_t)st.st_size;
+    ri->mtime_sec  = (uint64_t)st.st_mtime;
+
+    ri->mode = 0;
+    if ((st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0) {
+        ri->mode |= FS_MODE_READONLY;
+    }
+    const char *base = strrchr(root, '/');
+    base = base ? base + 1 : root;
+    if (base[0] == '.' && base[1] != '\0') {
+        ri->mode |= FS_MODE_HIDDEN;
+    }
+
+    if (ri->is_dir) {
+        if (!fs_walker_push_frame_(w, root)) {
+            fs_walker_cleanup_(w);
+            return 0;
+        }
+    }
+
+    ri->path = fs_strdup_(root);
+    if (!ri->path) {
+        fs_walker_set_oom_error_(w);
+        fs_walker_cleanup_(w);
+        return 0;
+    }
+    fs_normalize_seps_(ri->path);
+
+#endif
+
+    w->yielded_root = 0;
+    w->has_error    = 0;
+    return 1;
+}
+
+
+FSAPI FsFileInfo *
+fs_walker_next(FsWalker *w)
+{
+    if (!w)           return 0;
+    if (w->has_error) return 0;
+
+    fs_file_info_free(&w->current);
+
+    // First call: yield the root itself
+    if (!w->yielded_root) {
+        w->yielded_root = 1;
+        fs_file_info_free(&w->current); // Defensive
+
+        // Copy metadata from root_info
+        w->current = w->root_info;
+
+        // But give current its own path copy so root_info remains valid
+        w->current.path = fs_strdup_(w->root_info.path);
+        if (!w->current.path) {
+            fs_walker_set_oom_error_(w);
+            fs_walker_cleanup_(w);
+            return NULL;
+        }
+        return &w->current;
+    }
+
+    // Subsequent calls: traverse frames, depth-first, pre-order
+    for (;;) {
+        if (w->len == 0) {
+            // Done
+            return NULL;
+        }
+
+#ifdef _WIN32
+        FsWalkerFrameWin *frame = &w->frames[w->len - 1];
+        WIN32_FIND_DATAA *fd    = &frame->data;
+
+        for (;;) {
+            if (frame->first) {
+                frame->first = 0;
+            } else {
+                if (!FindNextFileA(frame->handle, fd)) {
+                    DWORD err = GetLastError();
+                    if (err == ERROR_NO_MORE_FILES) {
+                        // Pop frame
+                        FindClose(frame->handle);
+                        free(frame->dir_path);
+                        w->len--;
+                        break;
+                    }
+                    fs_walker_set_sys_error_(w, err);
+                    fs_walker_cleanup_(w);
+                    return NULL;
+                }
+            }
+
+            const char *name = fd->cFileName;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+                continue;
+            }
+
+            char *child = fs_join_(frame->dir_path, name);
+            if (!child) {
+                fs_walker_set_oom_error_(w);
+                fs_walker_cleanup_(w);
+                return NULL;
+            }
+            fs_normalize_seps_(child);
+
+            WIN32_FILE_ATTRIBUTE_DATA fad;
+            if (!GetFileAttributesExA(child, GetFileExInfoStandard, &fad)) {
+                fs_walker_set_sys_error_(w, GetLastError());
+                free(child);
+                fs_walker_cleanup_(w);
+                return NULL;
+            }
+
+            w->current.path       = child;
+            w->current.is_dir     = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            w->current.is_symlink = (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+            ULARGE_INTEGER sz;
+            sz.HighPart = fad.nFileSizeHigh;
+            sz.LowPart  = fad.nFileSizeLow;
+            w->current.size   = (uint64_t)sz.QuadPart;
+
+            w->current.mtime_sec = fs_filetime_to_unix_seconds_(fad.ftLastWriteTime);
+
+            w->current.mode = 0;
+            if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) w->current.mode |= FS_MODE_READONLY;
+            if (fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)   w->current.mode |= FS_MODE_HIDDEN;
+            if (fad.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)   w->current.mode |= FS_MODE_SYSTEM;
+
+            // Only recurse into real directories, not reparse points
+            if (w->current.is_dir && !w->current.is_symlink) {
+                if (!fs_walker_push_frame_(w, child)) {
+                    w->current.path = NULL;
+                    free(child);
+                    fs_walker_cleanup_(w);
+                    return NULL;
+                }
+            }
+
+            return &w->current;
+        }
+
+#else
+        FsWalkerFramePosix *frame = &w->frames[w->len - 1];
+        struct dirent *ent;
+
+        while ((ent = readdir(frame->dir)) != NULL) {
+            const char *name = ent->d_name;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+                continue;
+            }
+
+            char *child = fs_join_(frame->dir_path, name);
+            if (!child) {
+                fs_walker_set_oom_error_(w);
+                fs_walker_cleanup_(w);
+                return NULL;
+            }
+            fs_normalize_seps_(child);
+
+            struct stat st;
+            if (lstat(child, &st) < 0) {
+                fs_walker_set_sys_error_(w, errno);
+                free(child);
+                fs_walker_cleanup_(w);
+                return NULL;
+            }
+
+            w->current.path       = child;
+            w->current.is_dir     = S_ISDIR(st.st_mode) != 0;
+            w->current.is_symlink = S_ISLNK(st.st_mode) != 0;
+            w->current.size       = (uint64_t)st.st_size;
+            w->current.mtime_sec  = (uint64_t)st.st_mtime;
+
+            w->current.mode = 0;
+
+            // Read-only
+            if ((st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0) {
+                w->current.mode |= FS_MODE_READONLY;
+            }
+
+            // Hidden
+            const char *base = name;  // name is already the basename
+            if (base[0] == '.' && base[1] != '\0') {
+                w->current.mode |= FS_MODE_HIDDEN;
+            }
+
+            // Recurse into directories. lstat() means we don't follow symlink dirs
+            if (w->current.is_dir) {
+                if (!fs_walker_push_frame_(w, child)) {
+                    w->current.path = NULL;
+                    free(child);
+                    fs_walker_cleanup_(w);
+                    return NULL;
+                }
+            }
+
+            return &w->current;
+        }
+
+        // no more entries -> pop frame
+        closedir(frame->dir);
+        free(frame->dir_path);
+        w->len -= 1;
+#endif
+    }
+}
+
+FSAPI void
+fs_walker_free(FsWalker *w)
+{
+    if (!w) return;
+    fs_walker_cleanup_(w);
+    fs_file_info_free(&w->current);
+    memset(w, 0, sizeof *w);
+}
+
+FSAPI char *
+fs_strerror(uint32_t err)
+{
+    switch (err) {
+        case FS_ERROR_NONE: return "No error";
+        case FS_ERROR_GENERIC: return "Unknown error";
+        case FS_ERROR_ACCESS_DENIED: return "Access denied";
+        case FS_ERROR_OUT_OF_MEMORY: return "Out of memory";
+        case FS_ERROR_FILE_NOT_FOUND: return "File not found";
+    }
+    return "";
+}
+
+
+#endif
+#endif
