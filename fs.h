@@ -11,15 +11,15 @@
  * ~~ CUSTOMIZATION ~~
  * Certain behavior of fs.h can be customized by defining some
  * preprocessor definitions before including the `fs.h`:
- *  - FS_IMPLEMENTATION ........................... Include all function definitions.
- *  - FSAPI ....................................... Prefixed to all functions.
- *                                                   Example: `#define FSAPI static inline`
- *                                                   Default: Nothing
- *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS ........ Use `/` as path separator on Windows,
- *                                                  instead of the default, which is '\'.
- *  - FS_REALLOC(ptr, new_size) && FS_FREE(size) .. Define custom allocators for `fs.h`.
- *                                                  Must match the semantics of libc realloc and free.
- *                                                   Default: `libc realloc` and `libc free`.
+ *  - FS_IMPLEMENTATION .......................... Include all function definitions.
+ *  - FSAPI ...................................... Prefixed to all functions.
+ *                                                  Example: `#define FSAPI static inline`
+ *                                                  Default: Nothing
+ *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS ....... Use `/` as path separator on Windows,
+ *                                                 instead of the default, which is '\'.
+ *  - FS_REALLOC(ptr, new_size) && FS_FREE(ptr) .. Define custom allocators for `fs.h`.
+ *                                                 Must match the semantics of libc realloc and free.
+ *                                                  Default: `libc realloc` and `libc free`.
  *
  * ~~ LICENSE ~~
  * `fs.h` is licenses under the MIT license. Full license text is
@@ -37,13 +37,15 @@
 #endif
 
 #if defined(FS_REALLOC) != defined(FS_FREE)
-#error "IF YOU DEFINE ONE OF FS_REALLOC OR FS_FREE, THEN BOTH FS_REALLOC AND FS_FREE MUST BE DEFINED"
+#    error "IF YOU DEFINE ONE OF FS_REALLOC OR FS_FREE, THEN BOTH FS_REALLOC AND FS_FREE MUST BE DEFINED"
+#else
 #endif
 #ifndef FS_REALLOC
-#define FS_REALLOC(ptr, new_size) realloc(ptr, new_size)
+#    include <stdlib.h>
+#    define FS_REALLOC(ptr, new_size) realloc((ptr), (new_size))
 #endif
 #ifndef FS_FREE
-#define FS_FREE(ptr) free(ptr)
+#    define FS_FREE(ptr) free((ptr))
 #endif
 
 
@@ -176,7 +178,7 @@ fs_read_file(const char       *path,
  *   - returns FS_ERROR_* bitmask
  *   - *bytes_read_out is set to 0
  *   - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
- *     or GetLastError() (Windows), or 0 on pure allocation failure.
+ *     or GetLastError() (Windows).
  *
  * Notes:
  *   - The buffer is not NUL-terminated; treat it as binary data.
@@ -319,9 +321,8 @@ fs_delete_file(const char *path,
  *
  * On failure:
  *   - returns a combination of FS_ERROR_* bits (e.g. FS_ERROR_ACCESS_DENIED,
- *     FS_ERROR_FILE_NOT_FOUND, FS_ERROR_GENERIC)
- *   - if sys_error_out != NULL, *sys_error_out is set to a platform-specific
- *     error code (errno on POSIX, GetLastError() on Windows).
+ *     FS_ERROR_FILE_NOT_FOUND, FS_ERROR_DIRECTORY_ALREADY_EXISTS,
+ *     FS_ERROR_FILE_IS_NOT_DIRECTORY, FS_ERROR_GENERIC)
  */
 FSAPI uint32_t
 fs_make_directory(const char *path,
@@ -406,15 +407,22 @@ fs_copy_tree(const char *src_dir,
 /**
  * Recursively delete a directory tree at `root`.
  *
- * Returns an FS_ERROR_* code:
- *   - FS_ERROR_NONE           on success
- *   - FS_ERROR_ACCESS_DENIED  if unlink/rmdir/DeleteFile/RemoveDirectory fails with permission errors
- *   - FS_ERROR_FILE_NOT_FOUND if root does not exist
- *   - FS_ERROR_OUT_OF_MEMORY  if allocations fail
- *   - FS_ERROR_GENERIC        for all other failures
+ * Behaviour:
+ *   - Deletes `root` and all files/subdirectories beneath it.
+ *   - Symlinked directories / reparse-point directories are not followed;
+ *     they are deleted as entries rather than traversed into.
  *
- * If sys_error_out != NULL:
- *   *sys_error_out = the underlying errno or GetLastError(), or 0 on OOM.
+ * On success:
+ *   - returns FS_ERROR_NONE
+ *
+ * On failure:
+ *   - returns a combination of FS_ERROR_* bits, for example:
+ *       * FS_ERROR_FILE_NOT_FOUND      if `root` does not exist
+ *       * FS_ERROR_ACCESS_DENIED       on permission-related failures
+ *       * FS_ERROR_OUT_OF_MEMORY       if internal allocations fail
+ *       * FS_ERROR_GENERIC             for other failures
+ *   - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
+ *     or GetLastError() (Windows), or 0 on pure allocation failures.
  */
 FSAPI uint32_t fs_delete_tree(const char *root, uint64_t *sys_error_out);
 
@@ -662,13 +670,18 @@ fs_map_win32_error_(DWORD err)
 {
     switch (err) {
     case ERROR_ACCESS_DENIED:
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION:
         return FS_ERROR_ACCESS_DENIED;
     case ERROR_FILE_NOT_FOUND:
     case ERROR_PATH_NOT_FOUND:
     case ERROR_INVALID_DRIVE:
         return FS_ERROR_FILE_NOT_FOUND;
     case ERROR_FILE_EXISTS:
+    case ERROR_ALREADY_EXISTS:
         return FS_ERROR_FILE_ALREADY_EXISTS;
+    case ERROR_DIRECTORY:
+        return FS_ERROR_FILE_IS_NOT_DIRECTORY;
     case ERROR_NOT_ENOUGH_MEMORY:
     case ERROR_OUTOFMEMORY:
         return FS_ERROR_OUT_OF_MEMORY;
@@ -685,8 +698,11 @@ fs_map_errno_(int e)
     case EPERM:
         return FS_ERROR_ACCESS_DENIED;
     case ENOENT:
-    case ENOTDIR:
         return FS_ERROR_FILE_NOT_FOUND;
+    case ENOTDIR:
+        return FS_ERROR_FILE_IS_NOT_DIRECTORY;
+    case EEXIST:
+        return FS_ERROR_FILE_ALREADY_EXISTS;
     case ENOMEM:
         return FS_ERROR_OUT_OF_MEMORY;
     default:
@@ -1458,8 +1474,28 @@ fs_make_directory(const char *path,
     }
 
     DWORD err = GetLastError();
-    if (err == ERROR_ALREADY_EXISTS && (flags & FS_OP_REUSE_DIRS)) {
-        return FS_ERROR_NONE;
+
+    if (err == ERROR_ALREADY_EXISTS) {
+        DWORD attrs = GetFileAttributesA(path);
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            // We thought it existed, but now we can't stat it.
+            DWORD attr_err = GetLastError();
+            if (sys_error_out) *sys_error_out = (uint64_t)attr_err;
+            return fs_map_win32_error_(attr_err);
+        }
+
+        if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+            if (flags & FS_OP_REUSE_DIRS) {
+                return FS_ERROR_NONE;
+            } else {
+                if (sys_error_out) *sys_error_out = (uint64_t)err;
+                return FS_ERROR_DIRECTORY_ALREADY_EXISTS;
+            }
+        } else {
+            // A non-directory exists at this path.
+            if (sys_error_out) *sys_error_out = (uint64_t)err;
+            return FS_ERROR_FILE_ALREADY_EXISTS;
+        }
     }
 
     if (sys_error_out) *sys_error_out = (uint64_t)err;
@@ -1471,8 +1507,28 @@ fs_make_directory(const char *path,
     }
 
     int e = errno;
-    if (e == EEXIST && (flags & FS_OP_REUSE_DIRS)) {
-        return FS_ERROR_NONE;
+
+    if (e == EEXIST) {
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                if (flags & FS_OP_REUSE_DIRS) {
+                    return FS_ERROR_NONE;
+                } else {
+                    if (sys_error_out) *sys_error_out = (uint64_t)e;
+                    return FS_ERROR_DIRECTORY_ALREADY_EXISTS;
+                }
+            } else {
+                // A non-directory exists at this path.
+                if (sys_error_out) *sys_error_out = (uint64_t)e;
+                return FS_ERROR_FILE_ALREADY_EXISTS;
+            }
+        } else {
+            // mkdir said EEXIST but stat failed; just map the stat error.
+            int st_e = errno;
+            if (sys_error_out) *sys_error_out = (uint64_t)st_e;
+            return fs_map_errno_(st_e);
+        }
     }
 
     if (sys_error_out) *sys_error_out = (uint64_t)e;
