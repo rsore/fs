@@ -2,26 +2,28 @@
  * fs.h — Cross-platform API for file system interaction,
  *        targeting Windows and POSIX.
  *
- * ~~ LIBRARY USAGE ~~
- * `fs.h` is a single-header C and C++ library.
- * The library can be integrated in your project by defining FS_IMPLEMENTATION in
- * exactly one translation unit before including the header. This will prompt
- * `fs.h` to include all function definitions in that translation unit.
+ * ~~ LIBRARY INTEGRATION ~~
+ * `fs.h` is a single-header C and C++ library, and can easily be integrated
+ * in your project by defining FS_IMPLEMENTATION in translation unit before
+ * including the header. This will prompt `fs.h` to include all function
+ * definitions in that translation unit.
  *
  * ~~ CUSTOMIZATION ~~
  * Certain behavior of fs.h can be customized by defining some
  * preprocessor definitions before including the `fs.h`:
- *  - FS_IMPLEMENTATION                     Include all function definitions.
- *  - FSAPI                                 Prefixed to all functions.
- *                                           Example: `#define FSAPI static inline`
- *                                           Default: Nothing
- *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS  Use `/` as path separator on Windows,
- *                                          instead of the default, which is '\'.
+ *  - FS_IMPLEMENTATION ........................... Include all function definitions.
+ *  - FSAPI ....................................... Prefixed to all functions.
+ *                                                   Example: `#define FSAPI static inline`
+ *                                                   Default: Nothing
+ *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS ........ Use `/` as path separator on Windows,
+ *                                                  instead of the default, which is '\'.
+ *  - FS_REALLOC(ptr, new_size) && FS_FREE(size) .. Define custom allocators for `fs.h`.
+ *                                                  Must match the semantics of libc realloc and free.
+ *                                                   Default: `libc realloc` and `libc free`.
  *
  * ~~ LICENSE ~~
  * `fs.h` is licenses under the MIT license. Full license text is
  * at the end of this file.
- *
  */
 
 #ifndef FS_H_INCLUDED_
@@ -34,11 +36,15 @@
 #    define FSAPI
 #endif
 
-
-#ifdef __cplusplus
-extern "C" {
+#if defined(FS_REALLOC) != defined(FS_FREE)
+#error "IF YOU DEFINE ONE OF FS_REALLOC OR FS_FREE, THEN BOTH FS_REALLOC AND FS_FREE MUST BE DEFINED"
 #endif
-
+#ifndef FS_REALLOC
+#define FS_REALLOC(ptr, new_size) realloc(ptr, new_size)
+#endif
+#ifndef FS_FREE
+#define FS_FREE(ptr) free(ptr)
+#endif
 
 #define FS_MODE_READONLY  0x0001u
 #define FS_MODE_HIDDEN    0x0002u
@@ -49,6 +55,12 @@ extern "C" {
 #define FS_ERROR_ACCESS_DENIED  0x0002u
 #define FS_ERROR_OUT_OF_MEMORY  0x0004u
 #define FS_ERROR_FILE_NOT_FOUND 0x0008u
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 typedef struct {
     char *path;         // Dynamically allocated, freed by fs_file_info_free()
@@ -257,13 +269,13 @@ int lstat(const char *path, struct stat *buf);
 typedef struct FsWalkerFrameWin {
     HANDLE            handle;
     WIN32_FIND_DATAA  data;
-    char             *dir_path; // malloc'ed
+    char             *dir_path; // FS_REALLOC'ed
     int               first;    // 1 = use 'data' from FindFirstFileA
 } FsWalkerFrameWin;
 #else
 typedef struct FsWalkerFramePosix {
     DIR  *dir;
-    char *dir_path;  // malloc'ed
+    char *dir_path;  // FS_REALLOC'ed
 } FsWalkerFramePosix;
 #endif
 
@@ -272,7 +284,7 @@ static inline char *
 fs_strdup_(const char *s)
 {
     size_t n = strlen(s) + 1;
-    char *p = (char *)malloc(n);
+    char *p = (char *)FS_REALLOC(NULL, n);
     if (!p) return NULL;
     memcpy(p, s, n);
     return p;
@@ -310,7 +322,7 @@ fs_join_(const char *a, const char *b)
     }
 
     size_t len = la + (need_sep ? 1 : 0) + lb + 1;
-    char *p = (char *)malloc(len);
+    char *p = (char *)FS_REALLOC(NULL, len);
     if (!p) return NULL;
 
     if (need_sep) {
@@ -490,9 +502,9 @@ fs_walker_ensure_cap_(FsWalker *w, size_t needed)
     if (new_cap < needed) new_cap = needed;
 
 #ifdef _WIN32
-    FsWalkerFrameWin *nf = (FsWalkerFrameWin *)realloc(w->frames, new_cap * sizeof(FsWalkerFrameWin));
+    FsWalkerFrameWin *nf = (FsWalkerFrameWin *)FS_REALLOC(w->frames, new_cap * sizeof(FsWalkerFrameWin));
 #else
-    FsWalkerFramePosix *nf = (FsWalkerFramePosix *)realloc(w->frames, new_cap * sizeof(FsWalkerFramePosix));
+    FsWalkerFramePosix *nf = (FsWalkerFramePosix *)FS_REALLOC(w->frames, new_cap * sizeof(FsWalkerFramePosix));
 #endif
     if (!nf) return 0;
     w->frames = nf;
@@ -507,7 +519,7 @@ fs_walker_push_frame_(FsWalker *w, const char *dir_path)
 #ifdef _WIN32
     size_t  len     = strlen(dir_path);
     size_t  patlen  = len + 2 + 1; // dir + '\' + '*' + '\0'
-    char   *pattern = (char *)malloc(patlen);
+    char   *pattern = (char *)FS_REALLOC(NULL, patlen);
     if (!pattern) {
         fs_walker_set_oom_error_(w);
         return 0;
@@ -516,7 +528,7 @@ fs_walker_push_frame_(FsWalker *w, const char *dir_path)
 
     WIN32_FIND_DATAA fd;
     HANDLE           h = FindFirstFileA(pattern, &fd);
-    free(pattern);
+    FS_FREE(pattern);
 
     if (h == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
@@ -584,17 +596,17 @@ fs_walker_cleanup_(FsWalker *w)
         if (f->handle != INVALID_HANDLE_VALUE && f->handle != NULL) {
             FindClose(f->handle);
         }
-        free(f->dir_path);
+        FS_FREE(f->dir_path);
     }
 #else
     for (size_t i = 0; i < w->len; ++i) {
         FsWalkerFramePosix *f = &w->frames[i];
         if (f->dir) closedir(f->dir);
-        free(f->dir_path);
+        FS_FREE(f->dir_path);
     }
 #endif
 
-    free(w->frames);
+    FS_FREE(w->frames);
     w->frames = NULL;
     w->len    = w->cap = 0;
 
@@ -641,7 +653,7 @@ FSAPI void
 fs_file_info_free(FsFileInfo *f)
 {
     if (!f) return;
-    free(f->path);
+    FS_FREE(f->path);
     memset(f, 0, sizeof *f);
 }
 
@@ -695,7 +707,7 @@ fs_delete_tree(const char *root, uint64_t *sys_error_out)
             // Store for later
             if (ndirs == cap) {
                 size_t new_cap = cap ? cap*2 : 16;
-                char **tmp = realloc(dirs, new_cap * sizeof(*tmp));
+                char **tmp = FS_REALLOC(dirs, new_cap * sizeof(*tmp));
                 if (!tmp) {
                     err |= FS_ERROR_OUT_OF_MEMORY;
                     sys_err = 0;
@@ -732,10 +744,10 @@ fs_delete_tree(const char *root, uint64_t *sys_error_out)
             sys_err = errno;
         }
 #endif
-        free(d);
+        FS_FREE(d);
     }
 
-    free(dirs);
+    FS_FREE(dirs);
     fs_walker_free(&w);
 
     if (sys_error_out) *sys_error_out = sys_err;
@@ -821,7 +833,7 @@ fs_walker_next(FsWalker *w)
                     DWORD err = GetLastError();
                     if (err == ERROR_NO_MORE_FILES) {
                         FindClose(frame->handle);
-                        free(frame->dir_path);
+                        FS_FREE(frame->dir_path);
                         w->len--;
                         break;
                     }
@@ -850,7 +862,7 @@ fs_walker_next(FsWalker *w)
                 w->has_error = 1;
                 w->error    |= err;
                 w->sys_error = sys;
-                free(child);
+                FS_FREE(child);
                 fs_walker_cleanup_(w);
                 return NULL;
             }
@@ -860,7 +872,7 @@ fs_walker_next(FsWalker *w)
             if (w->current.is_dir && !w->current.is_symlink) {
                 if (!fs_walker_push_frame_(w, child)) {
                     w->current.path = NULL;
-                    free(child);
+                    FS_FREE(child);
                     fs_walker_cleanup_(w);
                     return NULL;
                 }
@@ -893,7 +905,7 @@ fs_walker_next(FsWalker *w)
                 w->has_error = 1;
                 w->error    |= err;
                 w->sys_error = sys;
-                free(child);
+                FS_FREE(child);
                 fs_walker_cleanup_(w);
                 return NULL;
             }
@@ -903,7 +915,7 @@ fs_walker_next(FsWalker *w)
             if (w->current.is_dir) {
                 if (!fs_walker_push_frame_(w, child)) {
                     w->current.path = NULL;
-                    free(child);
+                    FS_FREE(child);
                     fs_walker_cleanup_(w);
                     return NULL;
                 }
@@ -913,7 +925,7 @@ fs_walker_next(FsWalker *w)
         }
 
         closedir(frame->dir);
-        free(frame->dir_path);
+        FS_FREE(frame->dir_path);
         w->len -= 1;
 #endif
     }
