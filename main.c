@@ -48,6 +48,7 @@ main(void)
     size_t bytes_read;
     if ((err = fs_read_file_into("main.c", buf, buf_size, &bytes_read, NULL)) != FS_ERROR_NONE) {
         fprintf(stderr, "Error: %s\n", fs_strerror(err));
+        return 1;
     }
 
     fs_write_file("test - Copy", buf, bytes_read, NULL);
@@ -55,6 +56,32 @@ main(void)
     uint32_t error; uint64_t sys_error;
     if ((error = fs_delete_tree("test - Copy", &sys_error)) != FS_ERROR_NONE) {
         printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+
+    if ((error = fs_copy_file("main.c", "main.c.copy.coolcopy", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+
+    if ((error = fs_move_file("main.c.copy.coolcopy", "boof", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+
+    if ((error = fs_copy_tree("test", "copied_test", FS_OP_REUSE_DIRS | FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+
+    if ((error = fs_move_file("copied_test", "renamed_test", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+
+    if ((error = fs_move_tree("renamed_test", "renamed_as_tree", FS_OP_OVERWRITE | FS_OP_REUSE_DIRS, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
     }
 
     return 0;
