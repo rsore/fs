@@ -62,6 +62,22 @@ typedef struct {
 } FsFileInfo;
 
 /**
+ * Query metadata for a single path.
+ *
+ * On success:
+ *  - returns FS_ERROR_NONE
+ *  - *out is fully initialized
+ *  - out->path is an allocated copy of `path`, normalized
+ *
+ * On failure:
+ *  - returns an FS_ERROR_* bitmask (never FS_ERROR_NONE)
+ *  - *out is zeroed
+ *  - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
+ *    or GetLastError() (Windows), or 0 for OOM.
+ */
+FSAPI uint32_t fs_get_file_info(const char *path, FsFileInfo *out, uint64_t *sys_error_out);
+
+/**
  * Cleanup all internal resources.
  * Safe to call:
  *  - With zero-initialized object
@@ -358,6 +374,86 @@ fs_map_errno_(int e)
 }
 #endif
 
+#ifdef _WIN32
+static uint64_t
+fs_filetime_to_unix_seconds_(FILETIME ft)
+{
+    ULARGE_INTEGER t;
+    t.HighPart = ft.dwHighDateTime;
+    t.LowPart  = ft.dwLowDateTime;
+
+    // FILETIME is 100-ns intervals since 1601-01-01 UTC
+    const uint64_t EPOCH_DIFF = 11644473600ULL; // seconds between 1601 and 1970
+    return (t.QuadPart / 10000000ULL) - EPOCH_DIFF;
+}
+#endif
+
+static uint32_t
+fs_fill_file_info_(const char *path,
+                   FsFileInfo *out,
+                   uint64_t   *sys_error_out)
+{
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad)) {
+        DWORD err = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)err;
+        return fs_map_win32_error_(err);
+    }
+
+    memset(out, 0, sizeof *out);
+
+    out->is_dir     = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)     != 0;
+    out->is_symlink = (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+    ULARGE_INTEGER sz;
+    sz.HighPart = fad.nFileSizeHigh;
+    sz.LowPart  = fad.nFileSizeLow;
+    out->size   = (uint64_t)sz.QuadPart;
+
+    out->mtime_sec = fs_filetime_to_unix_seconds_(fad.ftLastWriteTime);
+
+    out->mode = 0;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) out->mode |= FS_MODE_READONLY;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)   out->mode |= FS_MODE_HIDDEN;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)   out->mode |= FS_MODE_SYSTEM;
+
+    if (sys_error_out) *sys_error_out = 0;
+    return FS_ERROR_NONE;
+#else
+    struct stat st;
+    if (lstat(path, &st) < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        return fs_map_errno_(e);
+    }
+
+    memset(out, 0, sizeof *out);
+
+    out->is_dir     = S_ISDIR(st.st_mode) != 0;
+    out->is_symlink = S_ISLNK(st.st_mode) != 0;
+    out->size       = (uint64_t)st.st_size;
+    out->mtime_sec  = (uint64_t)st.st_mtime;
+
+    out->mode = 0;
+
+    // Read-only: no write bits for user/group/others
+    if ((st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0) {
+        out->mode |= FS_MODE_READONLY;
+    }
+
+    // Hidden: basename starts with '.'
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (base[0] == '.' && base[1] != '\0') {
+        out->mode |= FS_MODE_HIDDEN;
+    }
+
+    if (sys_error_out) *sys_error_out = 0;
+    return FS_ERROR_NONE;
+#endif
+}
+
 
 #ifdef _WIN32
 static void
@@ -508,19 +604,38 @@ fs_walker_cleanup_(FsWalker *w)
     w->yielded_root = 0;
 }
 
-#ifdef _WIN32
-static uint64_t
-fs_filetime_to_unix_seconds_(FILETIME ft)
+FSAPI uint32_t
+fs_get_file_info(const char *path,
+                 FsFileInfo *out,
+                 uint64_t   *sys_error_out)
 {
-    ULARGE_INTEGER t;
-    t.HighPart = ft.dwHighDateTime;
-    t.LowPart  = ft.dwLowDateTime;
+    if (sys_error_out) *sys_error_out = 0;
+    if (!out) {
+        return FS_ERROR_GENERIC;
+    }
 
-    // FILETIME is 100-ns intervals since 1601-01-01 UTC
-    const uint64_t EPOCH_DIFF = 11644473600ULL; // seconds between 1601 and 1970
-    return (t.QuadPart / 10000000ULL) - EPOCH_DIFF;
+    memset(out, 0, sizeof *out);
+
+    if (!path) {
+        return FS_ERROR_GENERIC;
+    }
+
+    uint32_t err = fs_fill_file_info_(path, out, sys_error_out);
+    if (err != FS_ERROR_NONE) {
+        memset(out, 0, sizeof *out);
+        return err;
+    }
+
+    out->path = fs_strdup_(path);
+    if (!out->path) {
+        fs_file_info_free(out);
+        if (sys_error_out) *sys_error_out = 0;
+        return FS_ERROR_OUT_OF_MEMORY;
+    }
+    fs_normalize_seps_(out->path);
+
+    return FS_ERROR_NONE;
 }
-#endif
 
 FSAPI void
 fs_file_info_free(FsFileInfo *f)

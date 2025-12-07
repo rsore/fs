@@ -6,6 +6,24 @@
 int
 main(void)
 {
+    FsFileInfo file_info = {0};
+    uint32_t err; uint64_t sys_err;
+    if ((err = fs_get_file_info(".helloworld", &file_info, &sys_err)) != FS_ERROR_NONE) {
+        fprintf(stderr, "Error %u: %s\n", (uint32_t)sys_err, fs_strerror(err));
+        return 1;
+    }
+    printf("file_info::path       = %s\n", file_info.path);
+    printf("file_info::is_dir     = %s\n", file_info.is_dir ? "true" : "false");
+    printf("file_info::is_symlink = %s\n", file_info.is_symlink ? "true" : "false");
+    printf("file_info::size = %zu\n", file_info.size);
+    printf("file_info::mtime_sec = %zu\n", file_info.mtime_sec);
+    printf("file_info::mode = ");
+    if (file_info.mode & FS_MODE_READONLY) printf("| FS_MODE_READONLY |");
+    if (file_info.mode & FS_MODE_HIDDEN)   printf("| FS_MODE_HIDDEN |");
+    if (file_info.mode & FS_MODE_SYSTEM)   printf("| FS_MODE_SYSTEM |");
+    printf("\n\n");
+    fs_file_info_free(&file_info);
+
     FsWalker walker = {0};
     if (!fs_walker_init(&walker, "test/")) {
         printf("Error: %s\n", fs_strerror(walker.error));
