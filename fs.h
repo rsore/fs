@@ -67,47 +67,6 @@ extern "C" {
 FSAPI const char *fs_strerror(uint32_t err);
 
 
-/**
- * Returns non-zero if `path` exists (file, dir, or symlink), 0 if it
- * definitely does not exist. On error (e.g. permissions), returns 0.
- *
- * For error details, use fs_get_file_info().
- */
-FSAPI int fs_exists(const char *path);
-
-/**
- * Returns non-zero if `path` exists and is a regular file.
- * On error or if not a file, returns 0.
- */
-FSAPI int fs_is_file(const char *path);
-
-/**
- * Returns non-zero if `path` exists and is a directory.
- * On error or if not a directory, returns 0.
- */
-FSAPI int fs_is_dir(const char *path);
-
-
-FSAPI uint32_t
-fs_read_file(const char       *path,
-                    void     **data_out,
-                    size_t    *size_out,
-                    uint64_t  *sys_error_out);
-
-
-FSAPI uint32_t
-fs_read_file_into(const char *path,
-                  void       *buffer,
-                  size_t      buf_size,
-                  size_t     *bytes_read_out,
-                  uint64_t   *sys_error_out);
-FSAPI uint32_t
-fs_write_file(const char *path,
-              const void *data,
-              size_t      size,
-              uint64_t   *sys_error_out);
-
-
 typedef struct {
     char *path;         // Dynamically allocated, freed by fs_file_info_free()
 
@@ -146,6 +105,109 @@ FSAPI void fs_file_info_free(FsFileInfo *f);
 
 
 /**
+ * Returns non-zero if `path` exists (file, dir, or symlink), 0 if it
+ * definitely does not exist. On error (e.g. permissions), returns 0.
+ *
+ * For error details, use fs_get_file_info().
+ */
+FSAPI int fs_exists(const char *path);
+
+/**
+ * Returns non-zero if `path` exists and is a regular file.
+ * On error or if not a file, returns 0.
+ */
+FSAPI int fs_is_file(const char *path);
+
+/**
+ * Returns non-zero if `path` exists and is a directory.
+ * On error or if not a directory, returns 0.
+ */
+FSAPI int fs_is_dir(const char *path);
+
+
+/**
+ * Read the entire file at `path` into a newly allocated buffer.
+ *
+ * On success:
+ *   - returns FS_ERROR_NONE
+ *   - *data_out points to a freshly allocated buffer containing the file's
+ *     full contents (binary-safe)
+ *   - *size_out contains the number of bytes read
+ *   - The buffer is NOT NUL-terminated; treat it as raw binary.
+ *   - Caller must free the buffer with FS_FREE(), or free() if the user
+ *     has not overridden FS_FREE.
+ *
+ * On failure:
+ *   - returns FS_ERROR_* bitmask
+ *   - *data_out is set to NULL
+ *   - *size_out is set to 0
+ *   - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
+ *     or GetLastError() (Windows), or 0 on OOM.
+ *
+ * Notes:
+ *   - It is not an error to read an empty file; *data_out will be a valid
+ *     allocated buffer of size 0.
+ *   - This function reads the file data as raw bytes.
+ */
+FSAPI uint32_t
+fs_read_file(const char       *path,
+                    void     **data_out,
+                    size_t    *size_out,
+                    uint64_t  *sys_error_out);
+
+/**
+ * Read the file at `path` into a user-provided buffer.
+ *
+ * Reads up to `buf_size` bytes into `buffer`. If the file is larger than
+ * buf_size, only the first buf_size bytes are read.
+ *
+ * On success:
+ *   - returns FS_ERROR_NONE
+ *   - *bytes_read_out contains the number of bytes actually read
+ *
+ * On failure:
+ *   - returns FS_ERROR_* bitmask
+ *   - *bytes_read_out is set to 0
+ *   - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
+ *     or GetLastError() (Windows), or 0 on pure allocation failure.
+ *
+ * Notes:
+ *   - The buffer is not NUL-terminated; treat it as binary data.
+ *   - Passing buffer == NULL or buf_size == 0 results in FS_ERROR_GENERIC.
+ */
+FSAPI uint32_t
+fs_read_file_into(const char *path,
+                  void       *buffer,
+                  size_t      buf_size,
+                  size_t     *bytes_read_out,
+                  uint64_t   *sys_error_out);
+
+/**
+ * Write `size` bytes from `data` into the file at `path`.
+ *
+ * Overwrites the file if it exists, or creates it if it does not.
+ * The file is opened in *binary* mode on all platforms.
+ *
+ * On success:
+ *   - returns FS_ERROR_NONE
+ *
+ * On failure:
+ *   - returns FS_ERROR_* bitmask
+ *   - if sys_error_out != NULL, *sys_error_out is set to errno (POSIX)
+ *     or GetLastError() (Windows), or 0 on OOM.
+ *
+ * Notes:
+ *   - Passing data == NULL with size > 0 returns FS_ERROR_GENERIC.
+ *   - Writing zero bytes is allowed: the file is created or truncated.
+ */
+FSAPI uint32_t
+fs_write_file(const char *path,
+              const void *data,
+              size_t      size,
+              uint64_t   *sys_error_out);
+
+
+/**
  * Recursively delete a directory tree at `root`.
  *
  * Returns an FS_ERROR_* code:
@@ -159,6 +221,7 @@ FSAPI void fs_file_info_free(FsFileInfo *f);
  *   *sys_error_out = the underlying errno or GetLastError(), or 0 on OOM.
  */
 FSAPI uint32_t fs_delete_tree(const char *root, uint64_t *sys_error_out);
+
 
 /**
  * FsWalker is used to walk a file-structure tree from
