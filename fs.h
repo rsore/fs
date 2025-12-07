@@ -61,6 +61,11 @@
 extern "C" {
 #endif
 
+/**
+ * Return string description of error `err`
+ */
+FSAPI const char *fs_strerror(uint32_t err);
+
 
 /**
  * Returns non-zero if `path` exists (file, dir, or symlink), 0 if it
@@ -81,6 +86,26 @@ FSAPI int fs_is_file(const char *path);
  * On error or if not a directory, returns 0.
  */
 FSAPI int fs_is_dir(const char *path);
+
+
+FSAPI uint32_t
+fs_read_file(const char       *path,
+                    void     **data_out,
+                    size_t    *size_out,
+                    uint64_t  *sys_error_out);
+
+
+FSAPI uint32_t
+fs_read_file_into(const char *path,
+                  void       *buffer,
+                  size_t      buf_size,
+                  size_t     *bytes_read_out,
+                  uint64_t   *sys_error_out);
+FSAPI uint32_t
+fs_write_file(const char *path,
+              const void *data,
+              size_t      size,
+              uint64_t   *sys_error_out);
 
 
 typedef struct {
@@ -252,11 +277,6 @@ FSAPI FsFileInfo *fs_walker_next(FsWalker *w);
 FSAPI void fs_walker_free(FsWalker *w);
 
 
-/**
- * Return string description of error `err`
- */
-FSAPI char *fs_strerror(uint32_t err);
-
 #ifdef __cplusplus
 }
 #endif
@@ -267,6 +287,12 @@ FSAPI char *fs_strerror(uint32_t err);
  * Implementation details follows
  */
 #ifdef FS_IMPLEMENTATION
+
+#ifdef __cplusplus
+#define FS_ZERO_INIT_ {}
+#else
+#define FS_ZERO_INIT_ {0}
+#endif
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -280,6 +306,7 @@ FSAPI char *fs_strerror(uint32_t err);
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 // Ensure lstat is declared even in strict C modes
 struct stat;
@@ -637,6 +664,19 @@ fs_walker_cleanup_(FsWalker *w)
     w->yielded_root = 0;
 }
 
+FSAPI const char *
+fs_strerror(uint32_t err)
+{
+    switch (err) {
+        case FS_ERROR_NONE: return "No error";
+        case FS_ERROR_GENERIC: return "Unknown error";
+        case FS_ERROR_ACCESS_DENIED: return "Access denied";
+        case FS_ERROR_OUT_OF_MEMORY: return "Out of memory";
+        case FS_ERROR_FILE_NOT_FOUND: return "File not found";
+    }
+    return "";
+}
+
 FSAPI int
 fs_exists(const char *path)
 {
@@ -670,6 +710,261 @@ fs_is_dir(const char *path)
     uint32_t err = fs_fill_file_info_(path, &fi, &sys);
 
     return err == FS_ERROR_NONE && fi.is_dir && !fi.is_symlink;
+}
+
+FSAPI uint32_t
+fs_read_file(const char *path,
+             void      **data_out,
+             size_t     *size_out,
+             uint64_t   *sys_error_out)
+{
+    if (data_out) *data_out           = NULL;
+    if (size_out) *size_out           = 0;
+    if (sys_error_out) *sys_error_out = 0;
+
+    if (!path || !data_out || !size_out) {
+        return FS_ERROR_GENERIC;
+    }
+
+    FsFileInfo fi;
+    memset(&fi, 0, sizeof fi);
+
+    uint64_t sys = 0;
+    uint32_t err = fs_fill_file_info_(path, &fi, &sys);
+    if (err != FS_ERROR_NONE) {
+        if (sys_error_out) *sys_error_out = sys;
+        return err;
+    }
+
+    if (fi.size > (uint64_t)SIZE_MAX) {
+        // Too large to fit in a size_t
+        return FS_ERROR_OUT_OF_MEMORY;
+    }
+
+    size_t sz = (size_t)fi.size;
+
+    // Always allocate at least 1 byte so *data_out is never NULL on success.
+    size_t alloc_size = (sz == 0) ? 1 : sz;
+    void *buf = FS_REALLOC(NULL, alloc_size);
+    if (!buf) {
+        if (sys_error_out) *sys_error_out = 0;
+        return FS_ERROR_OUT_OF_MEMORY;
+    }
+
+    size_t bytes_read = 0;
+    err = fs_read_file_into(path, buf, sz, &bytes_read, sys_error_out);
+    if (err != FS_ERROR_NONE) {
+        FS_FREE(buf);
+        if (data_out) *data_out = NULL;
+        if (size_out) *size_out = 0;
+        return err;
+    }
+
+    *data_out = buf;
+    *size_out = bytes_read;
+    return FS_ERROR_NONE;
+}
+
+FSAPI uint32_t
+fs_read_file_into(const char *path,
+                  void       *buffer,
+                  size_t      buf_size,
+                  size_t     *bytes_read_out,
+                  uint64_t   *sys_error_out)
+{
+    if (bytes_read_out) *bytes_read_out = 0;
+    if (sys_error_out)  *sys_error_out  = 0;
+
+    if (!path || (!buffer && buf_size > 0) || !bytes_read_out) {
+        return FS_ERROR_GENERIC;
+    }
+
+#ifdef _WIN32
+    HANDLE h = CreateFileA(path,
+                           GENERIC_READ,
+                           FILE_SHARE_READ,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)err;
+        return fs_map_win32_error_(err);
+    }
+
+    uint8_t *p        = (uint8_t *)buffer;
+    size_t   remaining = buf_size;
+
+    while (remaining > 0) {
+        DWORD chunk    = 0;
+        DWORD to_read  = (remaining > (size_t)0xFFFFFFFFu)
+                                    ? 0xFFFFFFFFu
+                                    : (DWORD)remaining;
+
+        if (!ReadFile(h, p, to_read, &chunk, NULL)) {
+            DWORD err = GetLastError();
+            CloseHandle(h);
+            if (sys_error_out) *sys_error_out = (uint64_t)err;
+            return fs_map_win32_error_(err);
+        }
+
+        if (chunk == 0) {
+            // EOF
+            break;
+        }
+
+        p         += chunk;
+        remaining -= (size_t)chunk;
+    }
+
+    if (!CloseHandle(h)) {
+        DWORD err = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)err;
+        return fs_map_win32_error_(err);
+    }
+
+    *bytes_read_out = buf_size - remaining;
+    return FS_ERROR_NONE;
+
+#else
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        return fs_map_errno_(e);
+    }
+
+    uint8_t *p        = (uint8_t *)buffer;
+    size_t   remaining = buf_size;
+
+    while (remaining > 0) {
+        ssize_t n = read(fd, p, remaining);
+        if (n < 0) {
+            int e = errno;
+            close(fd);
+            if (sys_error_out) *sys_error_out = (uint64_t)e;
+            return fs_map_errno_(e);
+        }
+        if (n == 0) {
+            // EOF
+            break;
+        }
+
+        p         += (size_t)n;
+        remaining -= (size_t)n;
+    }
+
+    if (close(fd) < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        return fs_map_errno_(e);
+    }
+
+    *bytes_read_out = buf_size - remaining;
+    return FS_ERROR_NONE;
+#endif
+}
+
+FSAPI uint32_t
+fs_write_file(const char *path,
+              const void *data,
+              size_t      size,
+              uint64_t   *sys_error_out)
+{
+    if (sys_error_out) *sys_error_out = 0;
+    if (!path || (!data && size > 0)) {
+        return FS_ERROR_GENERIC;
+    }
+
+#ifdef _WIN32
+    HANDLE h = CreateFileA(path,
+                           GENERIC_WRITE,
+                           0, // no sharing
+                           NULL,
+                           CREATE_ALWAYS, // overwrite or create
+                           FILE_ATTRIBUTE_NORMAL,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)err;
+        return fs_map_win32_error_(err);
+    }
+
+    const uint8_t *p        = (const uint8_t *)data;
+    size_t         remaining = size;
+
+    while (remaining > 0) {
+        DWORD chunk     = 0;
+        const DWORD limit   = 0xFFFFFFFFu;
+        DWORD       to_write = (remaining > (size_t)limit)
+                                          ? limit
+                                          : (DWORD)remaining;
+
+        if (!WriteFile(h, p, to_write, &chunk, NULL)) {
+            DWORD err = GetLastError();
+            CloseHandle(h);
+            if (sys_error_out) *sys_error_out = (uint64_t)err;
+            return fs_map_win32_error_(err);
+        }
+
+        if (chunk == 0) {
+            // Shouldn't happen unless the filesystem is weird/full
+            CloseHandle(h);
+            if (sys_error_out) *sys_error_out = 0;
+            return FS_ERROR_GENERIC;
+        }
+
+        p         += chunk;
+        remaining -= (size_t)chunk;
+    }
+
+    if (!CloseHandle(h)) {
+        DWORD err = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)err;
+        return fs_map_win32_error_(err);
+    }
+
+    return FS_ERROR_NONE;
+
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        return fs_map_errno_(e);
+    }
+
+    const uint8_t *p        = (const uint8_t *)data;
+    size_t         remaining = size;
+
+    while (remaining > 0) {
+        ssize_t n = write(fd, p, remaining);
+        if (n < 0) {
+            int e = errno;
+            close(fd);
+            if (sys_error_out) *sys_error_out = (uint64_t)e;
+            return fs_map_errno_(e);
+        }
+        if (n == 0) {
+            // Shouldn't happen under normal circumstances
+            close(fd);
+            if (sys_error_out) *sys_error_out = 0;
+            return FS_ERROR_GENERIC;
+        }
+
+        p         += (size_t)n;
+        remaining -= (size_t)n;
+    }
+
+    if (close(fd) < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        return fs_map_errno_(e);
+    }
+
+    return FS_ERROR_NONE;
+#endif
 }
 
 
@@ -720,7 +1015,7 @@ fs_delete_tree(const char *root, uint64_t *sys_error_out)
     uint32_t err = FS_ERROR_NONE;
     uint64_t sys_err = 0;
 
-    FsWalker w = {0};
+    FsWalker w = FS_ZERO_INIT_;
     if (!fs_walker_init(&w, root)) {
         if (sys_error_out) *sys_error_out = w.sys_error;
         return w.error;
@@ -764,7 +1059,7 @@ fs_delete_tree(const char *root, uint64_t *sys_error_out)
             // Store for later
             if (ndirs == cap) {
                 size_t new_cap = cap ? cap*2 : 16;
-                char **tmp = FS_REALLOC(dirs, new_cap * sizeof(*tmp));
+                char **tmp = (char **)FS_REALLOC(dirs, new_cap * sizeof(*tmp));
                 if (!tmp) {
                     err |= FS_ERROR_OUT_OF_MEMORY;
                     sys_err = 0;
@@ -995,19 +1290,6 @@ fs_walker_free(FsWalker *w)
     fs_walker_cleanup_(w);
     fs_file_info_free(&w->current);
     memset(w, 0, sizeof *w);
-}
-
-FSAPI char *
-fs_strerror(uint32_t err)
-{
-    switch (err) {
-        case FS_ERROR_NONE: return "No error";
-        case FS_ERROR_GENERIC: return "Unknown error";
-        case FS_ERROR_ACCESS_DENIED: return "Access denied";
-        case FS_ERROR_OUT_OF_MEMORY: return "Out of memory";
-        case FS_ERROR_FILE_NOT_FOUND: return "File not found";
-    }
-    return "";
 }
 
 
