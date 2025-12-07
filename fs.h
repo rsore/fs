@@ -1,27 +1,38 @@
+/**
+ * fs.h — Cross-platform API for file system interaction,
+ *        targeting Windows and POSIX.
+ *
+ * ~~ LIBRARY USAGE ~~
+ * `fs.h` is a single-header C and C++ library.
+ * The library can be integrated in your project by defining FS_IMPLEMENTATION in
+ * exactly one translation unit before including the header. This will prompt
+ * `fs.h` to include all function definitions in that translation unit.
+ *
+ * ~~ CUSTOMIZATION ~~
+ * Certain behavior of fs.h can be customized by defining some
+ * preprocessor definitions before including the `fs.h`:
+ *  - FS_IMPLEMENTATION                     Include all function definitions.
+ *  - FSAPI                                 Prefixed to all functions.
+ *                                           Example: `#define FSAPI static inline`
+ *                                           Default: Nothing
+ *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS  Use `/` as path separator on Windows,
+ *                                          instead of the default, which is '\'.
+ *
+ * ~~ LICENSE ~~
+ * `fs.h` is licenses under the MIT license. Full license text is
+ * at the end of this file.
+ *
+ */
+
 #ifndef FS_H_INCLUDED_
 #define FS_H_INCLUDED_
 
 #include <stddef.h>
 #include <stdint.h>
 
-/**
- * FSAPI is an optional user-defined preprocessor definition.
- * It may be defined before including fs.h and will be prefixed
- * to all functions in the public API of fs.h.
- * For example `#define FSAPI static inline` may be useful if
- * fs.h is intended to be used only inside a single translation
- * unit.
- */
 #ifndef FSAPI
 #    define FSAPI
 #endif
-
-
-/**
- * FS_WIN32_USE_FORWARDSLASH_SEPARATORS can be defined in the same translation
- * unit that includes the fs.h implementations, to override the default behavior
- * of using '\' separators to instead use '/' separators.
- */
 
 
 #ifdef __cplusplus
@@ -39,11 +50,6 @@ extern "C" {
 #define FS_ERROR_OUT_OF_MEMORY  0x0004u
 #define FS_ERROR_FILE_NOT_FOUND 0x0008u
 
-/**
- * FsFileInfo is a simple POD and can be initialized
- * with {0} (or {} in C++), but should be freed with
- * fs_file_info_free.
- */
 typedef struct {
     char *path;         // Dynamically allocated, freed by fs_file_info_free()
 
@@ -56,7 +62,11 @@ typedef struct {
 } FsFileInfo;
 
 /**
- * Cleanup all internal resources. Safe to call multiple times.
+ * Cleanup all internal resources.
+ * Safe to call:
+ *  - With zero-initialized object
+ *  - multiple times.
+ *  - with NULL.
  */
 FSAPI void fs_file_info_free(FsFileInfo *f);
 
@@ -910,5 +920,30 @@ fs_strerror(uint32_t err)
 }
 
 
-#endif
-#endif
+#endif // FS_IMPLEMENTATION
+
+#endif // FS_H_INCLUDED_
+
+/**
+ * MIT License
+ *
+ * Copyright (c) 2025 Ruben Sørensen
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
