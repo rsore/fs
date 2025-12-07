@@ -62,6 +62,27 @@ extern "C" {
 #endif
 
 
+/**
+ * Returns non-zero if `path` exists (file, dir, or symlink), 0 if it
+ * definitely does not exist. On error (e.g. permissions), returns 0.
+ *
+ * For error details, use fs_get_file_info().
+ */
+FSAPI int fs_exists(const char *path);
+
+/**
+ * Returns non-zero if `path` exists and is a regular file.
+ * On error or if not a file, returns 0.
+ */
+FSAPI int fs_is_file(const char *path);
+
+/**
+ * Returns non-zero if `path` exists and is a directory.
+ * On error or if not a directory, returns 0.
+ */
+FSAPI int fs_is_dir(const char *path);
+
+
 typedef struct {
     char *path;         // Dynamically allocated, freed by fs_file_info_free()
 
@@ -615,6 +636,42 @@ fs_walker_cleanup_(FsWalker *w)
 
     w->yielded_root = 0;
 }
+
+FSAPI int
+fs_exists(const char *path)
+{
+    if (!path) return 0;
+
+    FsFileInfo fi;
+    uint32_t err = fs_fill_file_info_(path, &fi, NULL);
+
+    return err == FS_ERROR_NONE;
+}
+
+FSAPI int
+fs_is_file(const char *path)
+{
+    if (!path) return 0;
+
+    FsFileInfo fi;
+    uint64_t sys = 0;
+    uint32_t err = fs_fill_file_info_(path, &fi, &sys);
+
+    return err == FS_ERROR_NONE && !fi.is_dir && !fi.is_symlink;
+}
+
+FSAPI int
+fs_is_dir(const char *path)
+{
+    if (!path) return 0;
+
+    FsFileInfo fi;
+    uint64_t sys = 0;
+    uint32_t err = fs_fill_file_info_(path, &fi, &sys);
+
+    return err == FS_ERROR_NONE && fi.is_dir && !fi.is_symlink;
+}
+
 
 FSAPI uint32_t
 fs_get_file_info(const char *path,
