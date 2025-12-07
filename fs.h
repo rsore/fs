@@ -749,90 +749,31 @@ fs_walker_init(FsWalker *w, const char *root)
     if (!w || !root) return 0;
     memset(w, 0, sizeof *w);
 
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA fad;
-    if (!GetFileAttributesExA(root, GetFileExInfoStandard, &fad)) {
-        fs_walker_set_sys_error_(w, GetLastError());
+    FsFileInfo *ri = &w->root_info;
+    uint64_t sys = 0;
+    uint32_t err = fs_fill_file_info_(root, ri, &sys);
+    if (err != FS_ERROR_NONE) {
+        w->has_error = 1;
+        w->error    |= err;
+        w->sys_error = sys;
         fs_walker_cleanup_(w);
         return 0;
     }
 
-    FsFileInfo *ri = &w->root_info;
-    memset(ri, 0, sizeof *ri);
+    ri->path = fs_strdup_(root);
+    if (!ri->path) {
+        fs_walker_set_oom_error_(w);
+        fs_walker_cleanup_(w);
+        return 0;
+    }
+    fs_normalize_seps_(ri->path);
 
-    ri->is_dir     = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)     != 0;
-    ri->is_symlink = (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-
-    ULARGE_INTEGER sz;
-    sz.HighPart = fad.nFileSizeHigh;
-    sz.LowPart  = fad.nFileSizeLow;
-    ri->size    = (uint64_t)sz.QuadPart;
-
-    ri->mtime_sec = fs_filetime_to_unix_seconds_(fad.ftLastWriteTime);
-
-    ri->mode = 0;
-    if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ri->mode |= FS_MODE_READONLY;
-    if (fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)   ri->mode |= FS_MODE_HIDDEN;
-    if (fad.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)   ri->mode |= FS_MODE_SYSTEM;
-
-    // If it's a real directory (not a symlink/junction), push a frame
     if (ri->is_dir && !ri->is_symlink) {
-        if (!fs_walker_push_frame_(w, root)) {
+        if (!fs_walker_push_frame_(w, ri->path)) {
             fs_walker_cleanup_(w);
             return 0;
         }
     }
-
-    ri->path = fs_strdup_(root);
-    if (!ri->path) {
-        fs_walker_set_oom_error_(w);
-        fs_walker_cleanup_(w);
-        return 0;
-    }
-    fs_normalize_seps_(ri->path);
-
-#else
-    struct stat st;
-    if (lstat(root, &st) < 0) {
-        fs_walker_set_sys_error_(w, errno);
-        fs_walker_cleanup_(w);
-        return 0;
-    }
-
-    FsFileInfo *ri = &w->root_info;
-    memset(ri, 0, sizeof *ri);
-
-    ri->is_dir     = S_ISDIR(st.st_mode) != 0;
-    ri->is_symlink = S_ISLNK(st.st_mode) != 0;
-    ri->size       = (uint64_t)st.st_size;
-    ri->mtime_sec  = (uint64_t)st.st_mtime;
-
-    ri->mode = 0;
-    if ((st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0) {
-        ri->mode |= FS_MODE_READONLY;
-    }
-    const char *base = strrchr(root, '/');
-    base = base ? base + 1 : root;
-    if (base[0] == '.' && base[1] != '\0') {
-        ri->mode |= FS_MODE_HIDDEN;
-    }
-
-    if (ri->is_dir) {
-        if (!fs_walker_push_frame_(w, root)) {
-            fs_walker_cleanup_(w);
-            return 0;
-        }
-    }
-
-    ri->path = fs_strdup_(root);
-    if (!ri->path) {
-        fs_walker_set_oom_error_(w);
-        fs_walker_cleanup_(w);
-        return 0;
-    }
-    fs_normalize_seps_(ri->path);
-
-#endif
 
     w->yielded_root = 0;
     w->has_error    = 0;
@@ -843,20 +784,17 @@ fs_walker_init(FsWalker *w, const char *root)
 FSAPI FsFileInfo *
 fs_walker_next(FsWalker *w)
 {
-    if (!w)           return 0;
-    if (w->has_error) return 0;
+    if (!w)           return NULL;
+    if (w->has_error) return NULL;
 
     fs_file_info_free(&w->current);
 
-    // First call: yield the root itself
+    // First call: yield root
     if (!w->yielded_root) {
         w->yielded_root = 1;
-        fs_file_info_free(&w->current); // Defensive
+        fs_file_info_free(&w->current);
 
-        // Copy metadata from root_info
-        w->current = w->root_info;
-
-        // But give current its own path copy so root_info remains valid
+        w->current = w->root_info; // Copy metadata
         w->current.path = fs_strdup_(w->root_info.path);
         if (!w->current.path) {
             fs_walker_set_oom_error_(w);
@@ -866,11 +804,9 @@ fs_walker_next(FsWalker *w)
         return &w->current;
     }
 
-    // Subsequent calls: traverse frames, depth-first, pre-order
     for (;;) {
         if (w->len == 0) {
-            // Done
-            return NULL;
+            return NULL; // done
         }
 
 #ifdef _WIN32
@@ -884,7 +820,6 @@ fs_walker_next(FsWalker *w)
                 if (!FindNextFileA(frame->handle, fd)) {
                     DWORD err = GetLastError();
                     if (err == ERROR_NO_MORE_FILES) {
-                        // Pop frame
                         FindClose(frame->handle);
                         free(frame->dir_path);
                         w->len--;
@@ -909,31 +844,19 @@ fs_walker_next(FsWalker *w)
             }
             fs_normalize_seps_(child);
 
-            WIN32_FILE_ATTRIBUTE_DATA fad;
-            if (!GetFileAttributesExA(child, GetFileExInfoStandard, &fad)) {
-                fs_walker_set_sys_error_(w, GetLastError());
+            uint64_t sys = 0;
+            uint32_t err = fs_fill_file_info_(child, &w->current, &sys);
+            if (err != FS_ERROR_NONE) {
+                w->has_error = 1;
+                w->error    |= err;
+                w->sys_error = sys;
                 free(child);
                 fs_walker_cleanup_(w);
                 return NULL;
             }
 
-            w->current.path       = child;
-            w->current.is_dir     = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            w->current.is_symlink = (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            w->current.path = child;
 
-            ULARGE_INTEGER sz;
-            sz.HighPart = fad.nFileSizeHigh;
-            sz.LowPart  = fad.nFileSizeLow;
-            w->current.size   = (uint64_t)sz.QuadPart;
-
-            w->current.mtime_sec = fs_filetime_to_unix_seconds_(fad.ftLastWriteTime);
-
-            w->current.mode = 0;
-            if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) w->current.mode |= FS_MODE_READONLY;
-            if (fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)   w->current.mode |= FS_MODE_HIDDEN;
-            if (fad.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)   w->current.mode |= FS_MODE_SYSTEM;
-
-            // Only recurse into real directories, not reparse points
             if (w->current.is_dir && !w->current.is_symlink) {
                 if (!fs_walker_push_frame_(w, child)) {
                     w->current.path = NULL;
@@ -964,34 +887,19 @@ fs_walker_next(FsWalker *w)
             }
             fs_normalize_seps_(child);
 
-            struct stat st;
-            if (lstat(child, &st) < 0) {
-                fs_walker_set_sys_error_(w, errno);
+            uint64_t sys = 0;
+            uint32_t err = fs_fill_file_info_(child, &w->current, &sys);
+            if (err != FS_ERROR_NONE) {
+                w->has_error = 1;
+                w->error    |= err;
+                w->sys_error = sys;
                 free(child);
                 fs_walker_cleanup_(w);
                 return NULL;
             }
 
-            w->current.path       = child;
-            w->current.is_dir     = S_ISDIR(st.st_mode) != 0;
-            w->current.is_symlink = S_ISLNK(st.st_mode) != 0;
-            w->current.size       = (uint64_t)st.st_size;
-            w->current.mtime_sec  = (uint64_t)st.st_mtime;
+            w->current.path = child;
 
-            w->current.mode = 0;
-
-            // Read-only
-            if ((st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0) {
-                w->current.mode |= FS_MODE_READONLY;
-            }
-
-            // Hidden
-            const char *base = name;  // name is already the basename
-            if (base[0] == '.' && base[1] != '\0') {
-                w->current.mode |= FS_MODE_HIDDEN;
-            }
-
-            // Recurse into directories. lstat() means we don't follow symlink dirs
             if (w->current.is_dir) {
                 if (!fs_walker_push_frame_(w, child)) {
                     w->current.path = NULL;
@@ -1004,7 +912,6 @@ fs_walker_next(FsWalker *w)
             return &w->current;
         }
 
-        // no more entries -> pop frame
         closedir(frame->dir);
         free(frame->dir_path);
         w->len -= 1;
