@@ -41,13 +41,11 @@
 #else
 #endif
 #ifndef FS_REALLOC
-#    include <stdlib.h>
 #    define FS_REALLOC(ptr, new_size) realloc((ptr), (new_size))
 #endif
 #ifndef FS_FREE
 #    define FS_FREE(ptr) free((ptr))
 #endif
-
 
 #define FS_MODE_READONLY  0x01u
 #define FS_MODE_HIDDEN    0x02u
@@ -295,6 +293,25 @@ fs_copy_file(const char *src,
 FSAPI uint32_t
 fs_delete_file(const char *path,
                uint64_t   *sys_error_out);
+
+/**
+ * Calculate CRC-32 checksum of the file at `path`.
+ *
+ * On success:
+ *   - returns FS_ERROR_NONE
+ *   - *crc_out set to CRC32 value
+ *
+ * On failure:
+ *   - returns FS_ERROR_* (never FS_ERROR_NONE)
+ *   - *crc_out set to 0
+ *   - if sys_error_out != NULL:
+ *       POSIX:   errno
+ *       Windows: GetLastError() if available, else errno
+ */
+FSAPI uint32_t
+fs_crc32_file(const char *path,
+              uint32_t   *crc_out,
+              uint64_t   *sys_error_out);
 
 
 /**
@@ -555,10 +572,23 @@ FSAPI void fs_walker_free(FsWalker *w);
  */
 #ifdef FS_IMPLEMENTATION
 
+#define FS_MAYBE_UNUSED_(x) (void(x))
+
 #ifdef __cplusplus
-#define FS_ZERO_INIT_ {}
+#    define FS_ZERO_INIT_ {}
 #else
-#define FS_ZERO_INIT_ {0}
+#    define FS_ZERO_INIT_ {0}
+#endif
+
+#ifdef FS_INFO
+#    define FS_INFO_IMPLED_
+#else
+#    define FS_INFO(msg) ((void)0)
+#endif
+#ifdef FS_ERR
+#    define FS_ERR_IMPLED_
+#else
+#    define FS_ERR(msg) ((void)0)
 #endif
 
 #include <stddef.h>
@@ -593,6 +623,76 @@ typedef struct FsWalkerFramePosix {
     char *dir_path;  // FS_REALLOC'ed
 } FsWalkerFramePosix;
 #endif
+
+#define FS_LOG_INFO_ 0x1u
+#define FS_LOG_ERR_  0x2u
+
+static void
+fs_logf_(uint32_t type, const char *fmt, ...)
+{
+#ifndef FS_INFO_IMPLED_
+    if (type == FS_LOG_INFO_) {
+        (void)fmt;
+        return;
+    }
+#endif
+#ifndef FS_ERR_IMPLED_
+    if (type == FS_LOG_ERR_) {
+        (void)fmt;
+        return;
+    }
+#endif
+
+    char stack_buf[1024];
+    va_list args;
+
+    // Attempt to format into stack buffer
+    va_start(args, fmt);
+    int needed = vsnprintf(stack_buf, sizeof stack_buf, fmt, args);
+    va_end(args);
+
+    if (needed < 0) {
+        // Formatting failed
+        FS_ERR("fs: internal formatting error in fs_logf_");
+        return;
+    }
+
+    if ((size_t)needed < sizeof stack_buf) {
+        // Message fit into the stack buffer
+        if (type == FS_LOG_INFO_) {
+            FS_INFO(stack_buf);
+        } else if (type == FS_LOG_ERR_) {
+            FS_ERR(stack_buf);
+        }
+        return;
+    }
+
+    // Message was truncated, allocate a bigger buffer
+    size_t full_len = (size_t)needed + 1;
+    char *dynamic_buf = (char *)FS_REALLOC(NULL, full_len);
+    if (!dynamic_buf) {
+        // OOM, fall back to truncated version
+        if (type == FS_LOG_INFO_) {
+            FS_INFO(stack_buf);
+        } else if (type == FS_LOG_ERR_) {
+            FS_ERR(stack_buf);
+        }
+        return;
+    }
+
+    // format full message
+    va_start(args, fmt);
+    vsnprintf(dynamic_buf, full_len, fmt, args);
+    va_end(args);
+
+    if (type == FS_LOG_INFO_) {
+        FS_INFO(dynamic_buf);
+    } else if (type == FS_LOG_ERR_) {
+        FS_ERR(dynamic_buf);
+    }
+
+    FS_FREE(dynamic_buf);
+}
 
 
 static inline char *
@@ -1458,6 +1558,126 @@ fs_delete_file(const char *path,
     if (sys_error_out) *sys_error_out = (uint64_t)e;
     return fs_map_errno_(e);
 #endif
+}
+
+FSAPI uint32_t
+fs_crc32_file(const char *path,
+              uint32_t   *crc_out,
+              uint64_t   *sys_error_out)
+{
+    if (sys_error_out) *sys_error_out = 0;
+    if (crc_out) *crc_out             = 0;
+    if (!path || !crc_out) return FS_ERROR_GENERIC;
+
+    // Build CRC32 (IEEE) table locally each call (small + avoids global init races)
+    uint32_t table[256];
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t c = i;
+        for (uint32_t k = 0; k < 8; ++k) {
+            c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+        }
+        table[i] = c;
+    }
+
+    const size_t BUF_SIZE = 64 * 1024;
+    uint8_t *buf = (uint8_t *)FS_REALLOC(NULL, BUF_SIZE);
+    if (!buf) {
+        // pure allocation failure; no meaningful errno/GetLastError
+        return FS_ERROR_OUT_OF_MEMORY;
+    }
+
+    uint32_t result = FS_ERROR_NONE;
+    uint32_t crc = 0xFFFFFFFFu;
+
+#ifdef _WIN32
+    HANDLE h = CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        NULL
+        );
+
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        FS_FREE(buf);
+        return fs_map_win32_error_(e);
+    }
+
+    for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(h, buf, (DWORD)BUF_SIZE, &n, NULL)) {
+            DWORD e = GetLastError();
+            if (sys_error_out) *sys_error_out = (uint64_t)e;
+            result = fs_map_win32_error_(e);
+            break;
+        }
+        if (n == 0) {
+            // EOF
+            break;
+        }
+
+        for (DWORD i = 0; i < n; ++i) {
+            crc = table[(crc ^ buf[i]) & 0xFFu] ^ (crc >> 8);
+        }
+    }
+
+    DWORD eclose = 0;
+    if (!CloseHandle(h)) eclose = GetLastError();
+
+    if (result == FS_ERROR_NONE && eclose) {
+        if (sys_error_out) *sys_error_out = (uint64_t)eclose;
+        result = fs_map_win32_error_(eclose);
+    }
+
+#else
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        int e = errno;
+        if (sys_error_out) *sys_error_out = (uint64_t)e;
+        FS_FREE(buf);
+        return fs_map_errno_(e);
+    }
+
+    for (;;) {
+        ssize_t n = read(fd, buf, BUF_SIZE);
+        if (n < 0) {
+            int e = errno;
+            if (sys_error_out) *sys_error_out = (uint64_t)e;
+            result = fs_map_errno_(e);
+            break;
+        }
+        if (n == 0) {
+            // EOF
+            break;
+        }
+
+        for (ssize_t i = 0; i < n; ++i) {
+            crc = table[(crc ^ buf[(size_t)i]) & 0xFFu] ^ (crc >> 8);
+        }
+    }
+
+    int eclose = 0;
+    if (close(fd) < 0) eclose = errno;
+
+    if (result == FS_ERROR_NONE && eclose) {
+        if (sys_error_out) *sys_error_out = (uint64_t)eclose;
+        result = fs_map_errno_(eclose);
+    }
+#endif
+
+    FS_FREE(buf);
+
+    if (result != FS_ERROR_NONE) {
+        *crc_out = 0;
+        return result;
+    }
+
+    *crc_out = (crc ^ 0xFFFFFFFFu);
+    return FS_ERROR_NONE;
 }
 
 FSAPI uint32_t

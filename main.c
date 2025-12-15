@@ -84,5 +84,18 @@ main(void)
         return 1;
     }
 
+    uint32_t crc32_foo;
+    if ((error = fs_crc32_file("test/foo.txt", &crc32_foo, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+    uint32_t crc32_bar;
+    if ((error = fs_crc32_file("test/bar.txt", &crc32_bar, &sys_error)) != FS_ERROR_NONE) {
+        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
+        return 1;
+    }
+    printf("test/foo crc32: %x\n", crc32_foo);
+    printf("test/bar crc32: %x\n", crc32_bar);
+
     return 0;
 }
