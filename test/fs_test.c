@@ -44,7 +44,7 @@ MT_DEFINE_TEST(file_write_read)
     size_t size = 0;
     char small_buf[4];
     size_t bytes_read = 0;
-    FsFileInfo info = FS_INTERNAL_ZERO_INIT;
+    Fs_FileInfo info = FS_INTERNAL_ZERO_INIT;
     const char *root = "fs_test_out";
 
     fs_test_reset_root(root);
@@ -96,7 +96,7 @@ MT_DEFINE_TEST(missing_file_errors)
     void *data = NULL;
     size_t size = 0;
     Fs_Error err = FS_ERROR_NONE;
-    FsFileInfo info = FS_INTERNAL_ZERO_INIT;
+    Fs_FileInfo info = FS_INTERNAL_ZERO_INIT;
     const char *root = "fs_test_out";
 
     fs_test_reset_root(root);
@@ -210,12 +210,12 @@ MT_DEFINE_TEST(walker_traversal)
     char sub_dir[256];
     char file_a[256];
     char file_b[256];
-    FsWalker w = FS_INTERNAL_ZERO_INIT;
+    Fs_Walker w = FS_INTERNAL_ZERO_INIT;
     int seen_root = 0;
     int file_count = 0;
     int dir_count = 0;
     int total = 0;
-    const FsFileInfo *fi = NULL;
+    const Fs_FileInfo *fi = NULL;
     const char *root = "fs_test_out";
 
     fs_test_reset_root(root);

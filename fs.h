@@ -129,13 +129,13 @@ typedef struct {
     uint64_t size;      // File size in bytes
     uint64_t mtime_sec; // Last modification time (seconds since epoch)
     uint32_t mode;      // Bitfield of FS_MODE_* values
-} FsFileInfo;
+} Fs_FileInfo;
 
 // Query metadata for a single path. On success, out->path is allocated and normalized.
-FSAPI Fs_Error fs_get_file_info(const char *path, FsFileInfo *out);
+FSAPI Fs_Error fs_get_file_info(const char *path, Fs_FileInfo *out);
 
-// Frees FsFileInfo resources. Safe with NULL or zero-initialized structs.
-FSAPI void fs_file_info_free(FsFileInfo *f);
+// Frees Fs_FileInfo resources. Safe with NULL or zero-initialized structs.
+FSAPI void fs_file_info_free(Fs_FileInfo *f);
 
 
 // Returns non-zero if path exists (file/dir/symlink). On error, returns 0.
@@ -216,33 +216,33 @@ FSAPI Fs_Error fs_delete_tree(const char *root);
 
 // Walker for depth-first, pre-order traversal.
 // Symlinked dirs are reported but not traversed.
-typedef struct FsWalker {
+typedef struct Fs_Walker {
 #ifdef _WIN32
-    struct FsWalkerFrameWin   *frames;
+    struct Fs_WalkerFrameWin   *frames;
 #else
-    struct FsWalkerFramePosix *frames;
+    struct Fs_WalkerFramePosix *frames;
 #endif
     size_t len;
     size_t cap;
 
-    FsFileInfo root_info;
-    FsFileInfo current;
+    Fs_FileInfo root_info;
+    Fs_FileInfo current;
 
     int yielded_root;
 
     int         has_error;
     Fs_Error    error;      // FS_ERROR_* code
-} FsWalker;
+} Fs_Walker;
 
 // Initializes a walker rooted at root. Returns 1 on success, 0 on failure.
-FSAPI int fs_walker_init(FsWalker *w, const char *root);
+FSAPI int fs_walker_init(Fs_Walker *w, const char *root);
 
 // Advances the walker and returns the next entry, or NULL on finish/error.
-// Returned FsFileInfo is owned by the walker and valid until next call.
-FSAPI FsFileInfo *fs_walker_next(FsWalker *w);
+// Returned Fs_FileInfo is owned by the walker and valid until next call.
+FSAPI Fs_FileInfo *fs_walker_next(Fs_Walker *w);
 
 // Frees all walker resources. Safe to call multiple times.
-FSAPI void fs_walker_free(FsWalker *w);
+FSAPI void fs_walker_free(Fs_Walker *w);
 
 
 #ifdef __cplusplus
@@ -281,17 +281,17 @@ int lstat(const char *path, struct stat *buf);
 #endif
 
 #ifdef _WIN32
-typedef struct FsWalkerFrameWin {
+typedef struct Fs_WalkerFrameWin {
     HANDLE            handle;
     WIN32_FIND_DATAA  data;
     char             *dir_path; // FS_REALLOC'ed
     int               first;    // 1 = use 'data' from FindFirstFileA
-} FsWalkerFrameWin;
+} Fs_WalkerFrameWin;
 #else
-typedef struct FsWalkerFramePosix {
+typedef struct Fs_WalkerFramePosix {
     DIR  *dir;
     char *dir_path;  // FS_REALLOC'ed
-} FsWalkerFramePosix;
+} Fs_WalkerFramePosix;
 #endif
 
 static Fs_LogFn      fs_internal_global_log_fn        = NULL;
@@ -591,7 +591,7 @@ fs_internal_win32_filetime_to_unix_seconds(FILETIME ft)
 
 static Fs_Error
 fs_internal_fill_file_info(const char *path,
-                   FsFileInfo *out)
+                   Fs_FileInfo *out)
 {
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA fad;
@@ -653,14 +653,14 @@ fs_internal_fill_file_info(const char *path,
 
 #ifdef _WIN32
 static void
-fs_internal_win32_walker_set_sys_error(FsWalker *w, DWORD err)
+fs_internal_win32_walker_set_sys_error(Fs_Walker *w, DWORD err)
 {
     w->has_error = 1;
     fs_internal_set_error_if_none(&w->error, fs_internal_win32_map_error(err));
 }
 #else
 static void
-fs_internal_posix_walker_set_sys_error(FsWalker *w, int e)
+fs_internal_posix_walker_set_sys_error(Fs_Walker *w, int e)
 {
     w->has_error = 1;
     fs_internal_set_error_if_none(&w->error, fs_internal_posix_map_errno(e));
@@ -668,7 +668,7 @@ fs_internal_posix_walker_set_sys_error(FsWalker *w, int e)
 #endif
 
 static void
-fs_internal_walker_set_oom_error(FsWalker *w)
+fs_internal_walker_set_oom_error(Fs_Walker *w)
 {
     w->has_error = 1;
     fs_internal_set_error_if_none(&w->error, FS_ERROR_OUT_OF_MEMORY);
@@ -676,16 +676,16 @@ fs_internal_walker_set_oom_error(FsWalker *w)
 
 // Grow frame stack if necessary to fit needed
 static inline int
-fs_internal_walker_ensure_cap(FsWalker *w, size_t needed)
+fs_internal_walker_ensure_cap(Fs_Walker *w, size_t needed)
 {
     if (w->cap >= needed) return 1;
     size_t new_cap = w->cap ? w->cap * 2 : 8;
     if (new_cap < needed) new_cap = needed;
 
 #ifdef _WIN32
-    FsWalkerFrameWin *nf = (FsWalkerFrameWin *)FS_REALLOC(w->frames, new_cap * sizeof(FsWalkerFrameWin));
+    Fs_WalkerFrameWin *nf = (Fs_WalkerFrameWin *)FS_REALLOC(w->frames, new_cap * sizeof(Fs_WalkerFrameWin));
 #else
-    FsWalkerFramePosix *nf = (FsWalkerFramePosix *)FS_REALLOC(w->frames, new_cap * sizeof(FsWalkerFramePosix));
+    Fs_WalkerFramePosix *nf = (Fs_WalkerFramePosix *)FS_REALLOC(w->frames, new_cap * sizeof(Fs_WalkerFramePosix));
 #endif
     if (!nf) return 0;
     w->frames = nf;
@@ -695,7 +695,7 @@ fs_internal_walker_ensure_cap(FsWalker *w, size_t needed)
 
 // push a frame for a directory (may succeed without pushing if empty on Windows)
 static int
-fs_internal_walker_push_frame(FsWalker *w, const char *dir_path)
+fs_internal_walker_push_frame(Fs_Walker *w, const char *dir_path)
 {
 #ifdef _WIN32
     size_t  len     = strlen(dir_path);
@@ -729,7 +729,7 @@ fs_internal_walker_push_frame(FsWalker *w, const char *dir_path)
         return 0;
     }
 
-    FsWalkerFrameWin *f = &w->frames[w->len++];
+    Fs_WalkerFrameWin *f = &w->frames[w->len++];
     f->handle   = h;
     f->data     = fd;
     f->dir_path = fs_internal_strdup(dir_path);
@@ -758,7 +758,7 @@ fs_internal_walker_push_frame(FsWalker *w, const char *dir_path)
         return 0;
     }
 
-    FsWalkerFramePosix *f = &w->frames[w->len++];
+    Fs_WalkerFramePosix *f = &w->frames[w->len++];
     f->dir      = dir;
     f->dir_path = fs_internal_strdup(dir_path);
     if (!f->dir_path) {
@@ -773,13 +773,13 @@ fs_internal_walker_push_frame(FsWalker *w, const char *dir_path)
 }
 
 static inline void
-fs_internal_walker_cleanup(FsWalker *w)
+fs_internal_walker_cleanup(Fs_Walker *w)
 {
     if (!w) return;
 
 #ifdef _WIN32
     for (size_t i = 0; i < w->len; ++i) {
-        FsWalkerFrameWin *f = &w->frames[i];
+        Fs_WalkerFrameWin *f = &w->frames[i];
         if (f->handle != INVALID_HANDLE_VALUE && f->handle != NULL) {
             FindClose(f->handle);
         }
@@ -787,7 +787,7 @@ fs_internal_walker_cleanup(FsWalker *w)
     }
 #else
     for (size_t i = 0; i < w->len; ++i) {
-        FsWalkerFramePosix *f = &w->frames[i];
+        Fs_WalkerFramePosix *f = &w->frames[i];
         if (f->dir) closedir(f->dir);
         FS_FREE(f->dir_path);
     }
@@ -850,7 +850,7 @@ fs_exists(const char *path)
 
     fs_internal_log_trace_path("Check exists", path);
 
-    FsFileInfo fi;
+    Fs_FileInfo fi;
     Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE;
@@ -863,7 +863,7 @@ fs_is_file(const char *path)
 
     fs_internal_log_trace_path("Check is file", path);
 
-    FsFileInfo fi;
+    Fs_FileInfo fi;
     Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE && !fi.is_dir && !fi.is_symlink;
@@ -876,7 +876,7 @@ fs_is_dir(const char *path)
 
     fs_internal_log_trace_path("Check is dir", path);
 
-    FsFileInfo fi;
+    Fs_FileInfo fi;
     Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE && fi.is_dir && !fi.is_symlink;
@@ -897,7 +897,7 @@ fs_read_file(const char *path,
 
     fs_internal_log_trace_path("Reading file", path);
 
-    FsFileInfo fi;
+    Fs_FileInfo fi;
     memset(&fi, 0, sizeof fi);
 
     Fs_Error err = fs_internal_fill_file_info(path, &fi);
@@ -1629,7 +1629,7 @@ fs_move_tree(const char *src_dir,
     fs_internal_log_trace_path2("Moving directory tree", src_dir, dst_dir);
 
     // Make sure src_dir exists and is actually a directory.
-    FsFileInfo info = FS_INTERNAL_ZERO_INIT;
+    Fs_FileInfo info = FS_INTERNAL_ZERO_INIT;
     Fs_Error info_err = fs_get_file_info(src_dir, &info);
     if (info_err != FS_ERROR_NONE) {
         return info_err;
@@ -1671,7 +1671,7 @@ fs_copy_tree(const char *src_dir,
 
     Fs_Error err;
     // Check that src_dir exists and is a directory
-    FsFileInfo src_info = FS_INTERNAL_ZERO_INIT;
+    Fs_FileInfo src_info = FS_INTERNAL_ZERO_INIT;
     err = fs_get_file_info(src_dir, &src_info);
     if (err != FS_ERROR_NONE) {
         return err;
@@ -1683,7 +1683,7 @@ fs_copy_tree(const char *src_dir,
     }
 
     // Check / create dst_dir
-    FsFileInfo dst_info = FS_INTERNAL_ZERO_INIT;
+    Fs_FileInfo dst_info = FS_INTERNAL_ZERO_INIT;
     Fs_Error   dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
 
     if (dst_err == FS_ERROR_NONE) {
@@ -1719,7 +1719,7 @@ fs_copy_tree(const char *src_dir,
     fs_file_info_free(&dst_info);
 
     // Initialize walker on src_dir
-    FsWalker w = FS_INTERNAL_ZERO_INIT;
+    Fs_Walker w = FS_INTERNAL_ZERO_INIT;
     if (!fs_walker_init(&w, src_dir)) {
         // fs_walker_init fills w.error
         Fs_Error we = w.error ? w.error : FS_ERROR_GENERIC;
@@ -1733,7 +1733,7 @@ fs_copy_tree(const char *src_dir,
 
     Fs_Error result = FS_ERROR_NONE;
 
-    const FsFileInfo *fi;
+    const Fs_FileInfo *fi;
     while ((fi = fs_walker_next(&w)) != NULL) {
         const char *full_src = fi->path;
 
@@ -1797,7 +1797,7 @@ fs_copy_tree(const char *src_dir,
 
 FSAPI Fs_Error
 fs_get_file_info(const char *path,
-                 FsFileInfo *out)
+                 Fs_FileInfo *out)
 {
     if (!out) {
         fs_internal_log_error_path("get file info", path, FS_ERROR_GENERIC);
@@ -1832,7 +1832,7 @@ fs_get_file_info(const char *path,
 }
 
 FSAPI void
-fs_file_info_free(FsFileInfo *f)
+fs_file_info_free(Fs_FileInfo *f)
 {
     if (!f) return;
     FS_FREE(f->path);
@@ -1844,7 +1844,7 @@ fs_delete_tree(const char *root)
 {
     Fs_Error err = FS_ERROR_NONE;
 
-    FsWalker w = FS_INTERNAL_ZERO_INIT;
+    Fs_Walker w = FS_INTERNAL_ZERO_INIT;
     if (!fs_walker_init(&w, root)) {
         fs_internal_log_error_path("delete directory tree", root, w.error);
         return w.error;
@@ -1855,7 +1855,7 @@ fs_delete_tree(const char *root)
     char **dirs = NULL;
     size_t ndirs = 0, cap = 0;
 
-    const FsFileInfo *fi;
+    const Fs_FileInfo *fi;
     while ((fi = fs_walker_next(&w))) {
         if (fi->is_symlink) {
             // Delete symlink itself
@@ -1951,14 +1951,14 @@ fs_delete_tree(const char *root)
 }
 
 FSAPI int
-fs_walker_init(FsWalker *w, const char *root)
+fs_walker_init(Fs_Walker *w, const char *root)
 {
     if (!w || !root) return 0;
     memset(w, 0, sizeof *w);
 
     fs_internal_log_trace_path("Walking directory", root);
 
-    FsFileInfo *ri = &w->root_info;
+    Fs_FileInfo *ri = &w->root_info;
     Fs_Error err = fs_internal_fill_file_info(root, ri);
     if (err != FS_ERROR_NONE) {
         w->has_error = 1;
@@ -1990,8 +1990,8 @@ fs_walker_init(FsWalker *w, const char *root)
 }
 
 
-FSAPI FsFileInfo *
-fs_walker_next(FsWalker *w)
+FSAPI Fs_FileInfo *
+fs_walker_next(Fs_Walker *w)
 {
     if (!w)           return NULL;
     if (w->has_error) return NULL;
@@ -2019,7 +2019,7 @@ fs_walker_next(FsWalker *w)
         }
 
 #ifdef _WIN32
-        FsWalkerFrameWin *frame = &w->frames[w->len - 1];
+        Fs_WalkerFrameWin *frame = &w->frames[w->len - 1];
         WIN32_FIND_DATAA *fd    = &frame->data;
 
         for (;;) {
@@ -2078,7 +2078,7 @@ fs_walker_next(FsWalker *w)
         }
 
 #else
-        FsWalkerFramePosix *frame = &w->frames[w->len - 1];
+        Fs_WalkerFramePosix *frame = &w->frames[w->len - 1];
         struct dirent *ent;
 
         while ((ent = readdir(frame->dir)) != NULL) {
@@ -2127,7 +2127,7 @@ fs_walker_next(FsWalker *w)
 }
 
 FSAPI void
-fs_walker_free(FsWalker *w)
+fs_walker_free(Fs_Walker *w)
 {
     if (!w) return;
     fs_internal_walker_cleanup(w);

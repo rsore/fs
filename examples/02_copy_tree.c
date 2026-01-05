@@ -26,12 +26,12 @@ fs_ex_path3(char *buf, size_t cap, const char *a, const char *b, const char *c)
 static void
 print_tree(const char *root)
 {
-    FsWalker w = {0};
+    Fs_Walker w = {0};
     if (!fs_walker_init(&w, root)) {
         return;
     }
 
-    const FsFileInfo *fi = NULL;
+    const Fs_FileInfo *fi = NULL;
     while ((fi = fs_walker_next(&w)) != NULL) {
         printf("%s%s\n", fi->path, fi->is_dir ? " [dir]" : "");
     }

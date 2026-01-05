@@ -43,7 +43,7 @@ main(void)
     (void)fs_write_file(file_a, "A\n", 2);
     (void)fs_write_file(file_b, "B\n", 2);
 
-    FsWalker w = {0};
+    Fs_Walker w = {0};
     if (!fs_walker_init(&w, root)) {
         if (fs_exists(root)) (void)fs_delete_tree(root);
         return 1;
@@ -52,7 +52,7 @@ main(void)
     int dir_count = 0;
     int file_count = 0;
 
-    const FsFileInfo *fi = NULL;
+    const Fs_FileInfo *fi = NULL;
     while ((fi = fs_walker_next(&w)) != NULL) {
         printf("%s%s\n", fi->path, fi->is_dir ? " [dir]" : "");
         if (fi->is_dir) {

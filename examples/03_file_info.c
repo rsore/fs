@@ -30,7 +30,7 @@ main(void)
 
     (void)fs_write_file(file_path, "INFO\n", 5);
 
-    FsFileInfo info = {0};
+    Fs_FileInfo info = {0};
     if (fs_get_file_info(file_path, &info) != FS_ERROR_NONE) {
         if (fs_exists(root)) (void)fs_delete_tree(root);
         return 1;
