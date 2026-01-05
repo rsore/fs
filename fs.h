@@ -2,6 +2,8 @@
  * fs.h - Cross-platform API for file system interaction,
  *        targeting Windows and POSIX.
  *
+ * Version: 1.0.0
+ *
  * ~~ LIBRARY INTEGRATION ~~
  * `fs.h` is a single-header C and C++ library, and can easily be integrated
  * in your project by defining FS_IMPLEMENTATION in translation unit before
@@ -1860,12 +1862,17 @@ fs_get_file_info(const char  *path,
         return FS_ERROR_GENERIC;
     }
 
-    memset(out, 0, sizeof *out);
-
     if (!path) {
         fs_internal_log_error_path("get file info", path, FS_ERROR_GENERIC);
         return FS_ERROR_GENERIC;
     }
+
+    if (out->path) {
+        FS_FREE(out->path);
+        out->path = NULL;
+    }
+
+    memset(out, 0, sizeof *out);
 
     fs_internal_log_trace_path("Get file info", path);
 
@@ -1916,11 +1923,20 @@ fs_delete_tree(const char *root)
         if (fi->is_symlink) {
             // Delete symlink itself
 #ifdef _WIN32
-            if (!DeleteFileA(fi->path)) {
-                DWORD    last   = GetLastError();
-                Fs_Error mapped = fs_internal_win32_map_error(last);
-                fs_internal_set_error_if_none(&err, mapped);
-                fs_internal_log_error_path("delete file", fi->path, mapped);
+            if (fi->is_dir) {
+                if (!RemoveDirectoryA(fi->path)) {
+                    DWORD    last   = GetLastError();
+                    Fs_Error mapped = fs_internal_win32_map_error(last);
+                    fs_internal_set_error_if_none(&err, mapped);
+                    fs_internal_log_error_path("delete directory", fi->path, mapped);
+                }
+            } else {
+                if (!DeleteFileA(fi->path)) {
+                    DWORD    last   = GetLastError();
+                    Fs_Error mapped = fs_internal_win32_map_error(last);
+                    fs_internal_set_error_if_none(&err, mapped);
+                    fs_internal_log_error_path("delete file", fi->path, mapped);
+                }
             }
 #else
             if (unlink(fi->path) != 0) {
