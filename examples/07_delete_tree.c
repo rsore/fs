@@ -30,7 +30,7 @@ main(void)
 
     (void)fs_write_file(file_a, "DEL\n", 4);
 
-    uint32_t err = fs_delete_tree(root);
+    Fs_Error err = fs_delete_tree(root);
     if (err != FS_ERROR_NONE) {
         printf("delete failed: %s\n", fs_strerror(err));
         return 1;
@@ -39,4 +39,3 @@ main(void)
     printf("deleted: %s\n", root);
     return 0;
 }
-

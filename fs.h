@@ -99,7 +99,7 @@ extern "C" {
 #endif
 
 // Returns string description of error code.
-FSAPI const char *fs_strerror(uint32_t err);
+FSAPI const char *fs_strerror(Fs_Error err);
 
 typedef void (*Fs_LogFn)(unsigned int level, const char *msg, void *user_data);
 
@@ -132,7 +132,7 @@ typedef struct {
 } FsFileInfo;
 
 // Query metadata for a single path. On success, out->path is allocated and normalized.
-FSAPI uint32_t fs_get_file_info(const char *path, FsFileInfo *out);
+FSAPI Fs_Error fs_get_file_info(const char *path, FsFileInfo *out);
 
 // Frees FsFileInfo resources. Safe with NULL or zero-initialized structs.
 FSAPI void fs_file_info_free(FsFileInfo *f);
@@ -150,68 +150,68 @@ FSAPI int fs_is_dir(const char *path);
 
 // Reads entire file into a newly allocated buffer. Buffer is binary (not NUL-terminated).
 // Caller frees with FS_FREE(). Empty files return size 0 with a valid buffer.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_read_file(const char       *path,
                     void     **data_out,
                     size_t    *size_out);
 
 // Reads up to buf_size bytes into buffer. Buffer is binary (not NUL-terminated).
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_read_file_into(const char *path,
                   void       *buffer,
                   size_t      buf_size,
                   size_t     *bytes_read_out);
 
 // Writes size bytes to path. Overwrites or creates. Binary mode on all platforms.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_write_file(const char *path,
               const void *data,
               size_t      size);
 
 // Moves a regular file from src to dst. Honors FS_OP_OVERWRITE.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_move_file(const char *src,
              const char *dst,
              uint32_t    flags);
 
 // Copies a regular file from src to dst. Honors FS_OP_OVERWRITE.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_copy_file(const char *src,
              const char *dst,
              uint32_t    flags);
 
 // Deletes a file or symlink at path.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_delete_file(const char *path);
 
 // Computes CRC-32 of a file.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_crc32_file(const char *path,
               uint32_t   *crc_out);
 
 
 // Creates a single directory at path. Parents must already exist.
 // Use FS_OP_REUSE_DIRS to treat existing directories as success.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_make_directory(const char *path,
                   uint32_t    flags);
 
 // Recursively moves a directory tree from src_dir to dst_dir.
 // Honors FS_OP_OVERWRITE and FS_OP_REUSE_DIRS.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_move_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags);
 
 // Recursively copies a directory tree from src_dir to dst_dir.
 // Honors FS_OP_OVERWRITE and FS_OP_REUSE_DIRS.
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_copy_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags);
 
 // Recursively deletes a directory tree at root. Symlinked dirs are not followed.
-FSAPI uint32_t fs_delete_tree(const char *root);
+FSAPI Fs_Error fs_delete_tree(const char *root);
 
 
 // Walker for depth-first, pre-order traversal.
@@ -231,7 +231,7 @@ typedef struct FsWalker {
     int yielded_root;
 
     int         has_error;
-    uint32_t    error;      // FS_ERROR_* code
+    Fs_Error    error;      // FS_ERROR_* code
 } FsWalker;
 
 // Initializes a walker rooted at root. Returns 1 on success, 0 on failure.
@@ -389,7 +389,7 @@ fs_internal_strdup(const char *s)
 }
 
 static inline void
-fs_internal_set_error_if_none(uint32_t *dst, uint32_t err)
+fs_internal_set_error_if_none(Fs_Error *dst, Fs_Error err)
 {
     if (*dst == FS_ERROR_NONE) {
         *dst = err;
@@ -397,7 +397,7 @@ fs_internal_set_error_if_none(uint32_t *dst, uint32_t err)
 }
 
 static inline void
-fs_internal_log_error_path(const char *context, const char *path, uint32_t err)
+fs_internal_log_error_path(const char *context, const char *path, Fs_Error err)
 {
     if (err == FS_ERROR_NONE) {
         return;
@@ -410,7 +410,7 @@ fs_internal_log_error_path(const char *context, const char *path, uint32_t err)
 }
 
 static inline void
-fs_internal_log_error_path2(const char *context, const char *path_a, const char *path_b, uint32_t err)
+fs_internal_log_error_path2(const char *context, const char *path_a, const char *path_b, Fs_Error err)
 {
     if (err == FS_ERROR_NONE) {
         return;
@@ -529,7 +529,7 @@ fs_internal_normalize_seps(char *p)
 }
 
 #ifdef _WIN32
-static uint32_t
+static Fs_Error
 fs_internal_win32_map_error(DWORD err)
 {
     switch (err) {
@@ -554,7 +554,7 @@ fs_internal_win32_map_error(DWORD err)
     }
 }
 #else
-static uint32_t
+static Fs_Error
 fs_internal_posix_map_errno(int e)
 {
     switch (e) {
@@ -589,7 +589,7 @@ fs_internal_win32_filetime_to_unix_seconds(FILETIME ft)
 }
 #endif
 
-static uint32_t
+static Fs_Error
 fs_internal_fill_file_info(const char *path,
                    FsFileInfo *out)
 {
@@ -804,7 +804,7 @@ fs_internal_walker_cleanup(FsWalker *w)
 }
 
 FSAPI const char *
-fs_strerror(uint32_t err)
+fs_strerror(Fs_Error err)
 {
     switch (err) {
         case FS_ERROR_NONE:                     return "No error";
@@ -851,7 +851,7 @@ fs_exists(const char *path)
     fs_internal_log_trace_path("Check exists", path);
 
     FsFileInfo fi;
-    uint32_t err = fs_internal_fill_file_info(path, &fi);
+    Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE;
 }
@@ -864,7 +864,7 @@ fs_is_file(const char *path)
     fs_internal_log_trace_path("Check is file", path);
 
     FsFileInfo fi;
-    uint32_t err = fs_internal_fill_file_info(path, &fi);
+    Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE && !fi.is_dir && !fi.is_symlink;
 }
@@ -877,12 +877,12 @@ fs_is_dir(const char *path)
     fs_internal_log_trace_path("Check is dir", path);
 
     FsFileInfo fi;
-    uint32_t err = fs_internal_fill_file_info(path, &fi);
+    Fs_Error err = fs_internal_fill_file_info(path, &fi);
 
     return err == FS_ERROR_NONE && fi.is_dir && !fi.is_symlink;
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_read_file(const char *path,
              void      **data_out,
              size_t     *size_out)
@@ -900,7 +900,7 @@ fs_read_file(const char *path,
     FsFileInfo fi;
     memset(&fi, 0, sizeof fi);
 
-    uint32_t err = fs_internal_fill_file_info(path, &fi);
+    Fs_Error err = fs_internal_fill_file_info(path, &fi);
     if (err != FS_ERROR_NONE) {
         fs_internal_log_error_path("read file", path, err);
         return err;
@@ -936,7 +936,7 @@ fs_read_file(const char *path,
     return FS_ERROR_NONE;
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_read_file_into(const char *path,
                   void       *buffer,
                   size_t      buf_size,
@@ -961,7 +961,7 @@ fs_read_file_into(const char *path,
                            NULL);
     if (h == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path("read file", path, mapped);
         return mapped;
     }
@@ -978,7 +978,7 @@ fs_read_file_into(const char *path,
         if (!ReadFile(h, p, to_read, &chunk, NULL)) {
             DWORD err = GetLastError();
             CloseHandle(h);
-            uint32_t mapped = fs_internal_win32_map_error(err);
+            Fs_Error mapped = fs_internal_win32_map_error(err);
             fs_internal_log_error_path("read file", path, mapped);
             return mapped;
         }
@@ -994,7 +994,7 @@ fs_read_file_into(const char *path,
 
     if (!CloseHandle(h)) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path("read file", path, mapped);
         return mapped;
     }
@@ -1006,7 +1006,7 @@ fs_read_file_into(const char *path,
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
         int e = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("read file", path, mapped);
         return mapped;
     }
@@ -1019,7 +1019,7 @@ fs_read_file_into(const char *path,
         if (n < 0) {
             int e = errno;
             close(fd);
-            uint32_t mapped = fs_internal_posix_map_errno(e);
+            Fs_Error mapped = fs_internal_posix_map_errno(e);
             fs_internal_log_error_path("read file", path, mapped);
             return mapped;
         }
@@ -1034,7 +1034,7 @@ fs_read_file_into(const char *path,
 
     if (close(fd) < 0) {
         int e = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("read file", path, mapped);
         return mapped;
     }
@@ -1044,7 +1044,7 @@ fs_read_file_into(const char *path,
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_write_file(const char *path,
               const void *data,
               size_t      size)
@@ -1066,7 +1066,7 @@ fs_write_file(const char *path,
                            NULL);
     if (h == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path("write file", path, mapped);
         return mapped;
     }
@@ -1084,7 +1084,7 @@ fs_write_file(const char *path,
         if (!WriteFile(h, p, to_write, &chunk, NULL)) {
             DWORD err = GetLastError();
             CloseHandle(h);
-            uint32_t mapped = fs_internal_win32_map_error(err);
+            Fs_Error mapped = fs_internal_win32_map_error(err);
             fs_internal_log_error_path("write file", path, mapped);
             return mapped;
         }
@@ -1102,7 +1102,7 @@ fs_write_file(const char *path,
 
     if (!CloseHandle(h)) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path("write file", path, mapped);
         return mapped;
     }
@@ -1114,7 +1114,7 @@ fs_write_file(const char *path,
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) {
         int e = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("write file", path, mapped);
         return mapped;
     }
@@ -1127,7 +1127,7 @@ fs_write_file(const char *path,
         if (n < 0) {
             int e = errno;
             close(fd);
-            uint32_t mapped = fs_internal_posix_map_errno(e);
+            Fs_Error mapped = fs_internal_posix_map_errno(e);
             fs_internal_log_error_path("write file", path, mapped);
             return mapped;
         }
@@ -1144,7 +1144,7 @@ fs_write_file(const char *path,
 
     if (close(fd) < 0) {
         int e = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("write file", path, mapped);
         return mapped;
     }
@@ -1154,7 +1154,7 @@ fs_write_file(const char *path,
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_move_file(const char *src,
              const char *dst,
              uint32_t    flags)
@@ -1176,7 +1176,7 @@ fs_move_file(const char *src,
         } else {
             DWORD err = GetLastError();
             if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND) {
-                uint32_t mapped = fs_internal_win32_map_error(err);
+                Fs_Error mapped = fs_internal_win32_map_error(err);
                 fs_internal_log_error_path2("move file", src, dst, mapped);
                 return mapped;
             }
@@ -1190,7 +1190,7 @@ fs_move_file(const char *src,
 
     if (!MoveFileExA(src, dst, move_flags)) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path2("move file", src, dst, mapped);
         return mapped;
     }
@@ -1208,7 +1208,7 @@ fs_move_file(const char *src,
             return FS_ERROR_FILE_ALREADY_EXISTS;
         } else if (errno != ENOENT) {
             int e = errno;
-            uint32_t mapped = fs_internal_posix_map_errno(e);
+            Fs_Error mapped = fs_internal_posix_map_errno(e);
             fs_internal_log_error_path2("move file", src, dst, mapped);
             return mapped;
         }
@@ -1222,20 +1222,20 @@ fs_move_file(const char *src,
     int e = errno;
     if (e != EXDEV) {
         // Some non-cross-device error
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path2("move file", src, dst, mapped);
         return mapped;
     }
 
     // Cross-device move: copy, then unlink.
-    uint32_t err = fs_copy_file(src, dst, flags);
+    Fs_Error err = fs_copy_file(src, dst, flags);
     if (err != FS_ERROR_NONE) {
         return err;
     }
 
     if (unlink(src) < 0) {
         int ue = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(ue);
+        Fs_Error mapped = fs_internal_posix_map_errno(ue);
         fs_internal_log_error_path2("move file", src, dst, mapped);
         return mapped;
     }
@@ -1245,7 +1245,7 @@ fs_move_file(const char *src,
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_copy_file(const char *src,
              const char *dst,
              uint32_t    flags)
@@ -1262,7 +1262,7 @@ fs_copy_file(const char *src,
 
     if (!CopyFileA(src, dst, fail_if_exists)) {
         DWORD err = GetLastError();
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path2("copy file", src, dst, mapped);
         return mapped;
     }
@@ -1275,7 +1275,7 @@ fs_copy_file(const char *src,
     int src_fd = open(src, O_RDONLY);
     if (src_fd < 0) {
         int e = errno;
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path2("copy file", src, dst, mapped);
         return mapped;
     }
@@ -1291,7 +1291,7 @@ fs_copy_file(const char *src,
     if (dst_fd < 0) {
         int e = errno;
         close(src_fd);
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path2("copy file", src, dst, mapped);
         return mapped;
     }
@@ -1306,7 +1306,7 @@ fs_copy_file(const char *src,
         return FS_ERROR_OUT_OF_MEMORY;
     }
 
-    uint32_t result = FS_ERROR_NONE;
+    Fs_Error result = FS_ERROR_NONE;
 
     for (;;) {
         ssize_t n = read(src_fd, buf, BUF_SIZE);
@@ -1364,7 +1364,7 @@ copy_cleanup:
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_delete_file(const char *path)
 {
     if (!path) {
@@ -1381,7 +1381,7 @@ fs_delete_file(const char *path)
     }
 
     DWORD err = GetLastError();
-    uint32_t mapped = fs_internal_win32_map_error(err);
+    Fs_Error mapped = fs_internal_win32_map_error(err);
     fs_internal_log_error_path("delete file", path, mapped);
     return mapped;
 #else
@@ -1391,13 +1391,13 @@ fs_delete_file(const char *path)
     }
 
     int e = errno;
-    uint32_t mapped = fs_internal_posix_map_errno(e);
+    Fs_Error mapped = fs_internal_posix_map_errno(e);
     fs_internal_log_error_path("delete file", path, mapped);
     return mapped;
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_crc32_file(const char *path,
               uint32_t   *crc_out)
 {
@@ -1427,7 +1427,7 @@ fs_crc32_file(const char *path,
         return FS_ERROR_OUT_OF_MEMORY;
     }
 
-    uint32_t result = FS_ERROR_NONE;
+    Fs_Error result = FS_ERROR_NONE;
     uint32_t crc = 0xFFFFFFFFu;
 
 #ifdef _WIN32
@@ -1444,7 +1444,7 @@ fs_crc32_file(const char *path,
     if (h == INVALID_HANDLE_VALUE) {
         DWORD e = GetLastError();
         FS_FREE(buf);
-        uint32_t mapped = fs_internal_win32_map_error(e);
+        Fs_Error mapped = fs_internal_win32_map_error(e);
         fs_internal_log_error_path("compute CRC32 for file", path, mapped);
         return mapped;
     }
@@ -1480,7 +1480,7 @@ fs_crc32_file(const char *path,
     if (fd < 0) {
         int e = errno;
         FS_FREE(buf);
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("compute CRC32 for file", path, mapped);
         return mapped;
     }
@@ -1523,7 +1523,7 @@ fs_crc32_file(const char *path,
     return FS_ERROR_NONE;
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_make_directory(const char *path,
                   uint32_t    flags)
 {
@@ -1548,7 +1548,7 @@ fs_make_directory(const char *path,
             // We thought it existed, but now we can't stat it.
             DWORD attr_err = GetLastError();
             {
-                uint32_t mapped = fs_internal_win32_map_error(attr_err);
+                Fs_Error mapped = fs_internal_win32_map_error(attr_err);
                 fs_internal_log_error_path("create directory", path, mapped);
                 return mapped;
             }
@@ -1569,7 +1569,7 @@ fs_make_directory(const char *path,
     }
 
     {
-        uint32_t mapped = fs_internal_win32_map_error(err);
+        Fs_Error mapped = fs_internal_win32_map_error(err);
         fs_internal_log_error_path("create directory", path, mapped);
         return mapped;
     }
@@ -1601,7 +1601,7 @@ fs_make_directory(const char *path,
             // mkdir said EEXIST but stat failed; just map the stat error.
             int st_e = errno;
             {
-                uint32_t mapped = fs_internal_posix_map_errno(st_e);
+                Fs_Error mapped = fs_internal_posix_map_errno(st_e);
                 fs_internal_log_error_path("create directory", path, mapped);
                 return mapped;
             }
@@ -1609,14 +1609,14 @@ fs_make_directory(const char *path,
     }
 
     {
-        uint32_t mapped = fs_internal_posix_map_errno(e);
+        Fs_Error mapped = fs_internal_posix_map_errno(e);
         fs_internal_log_error_path("create directory", path, mapped);
         return mapped;
     }
 #endif
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_move_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags)
@@ -1630,7 +1630,7 @@ fs_move_tree(const char *src_dir,
 
     // Make sure src_dir exists and is actually a directory.
     FsFileInfo info = FS_INTERNAL_ZERO_INIT;
-    uint32_t info_err = fs_get_file_info(src_dir, &info);
+    Fs_Error info_err = fs_get_file_info(src_dir, &info);
     if (info_err != FS_ERROR_NONE) {
         return info_err;
     }
@@ -1642,13 +1642,13 @@ fs_move_tree(const char *src_dir,
     fs_file_info_free(&info);
 
     // Step 1: copy tree
-    uint32_t copy_err = fs_copy_tree(src_dir, dst_dir, flags);
+    Fs_Error copy_err = fs_copy_tree(src_dir, dst_dir, flags);
     if (copy_err != FS_ERROR_NONE) {
         return copy_err;
     }
 
     // Step 2: delete original tree
-    uint32_t del_err = fs_delete_tree(src_dir);
+    Fs_Error del_err = fs_delete_tree(src_dir);
     if (del_err != FS_ERROR_NONE) {
         return del_err;
     }
@@ -1657,7 +1657,7 @@ fs_move_tree(const char *src_dir,
     return FS_ERROR_NONE;
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_copy_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags)
@@ -1669,7 +1669,7 @@ fs_copy_tree(const char *src_dir,
 
     fs_internal_log_trace_path2("Copying directory tree", src_dir, dst_dir);
 
-    uint32_t err;
+    Fs_Error err;
     // Check that src_dir exists and is a directory
     FsFileInfo src_info = FS_INTERNAL_ZERO_INIT;
     err = fs_get_file_info(src_dir, &src_info);
@@ -1684,7 +1684,7 @@ fs_copy_tree(const char *src_dir,
 
     // Check / create dst_dir
     FsFileInfo dst_info = FS_INTERNAL_ZERO_INIT;
-    uint32_t   dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
+    Fs_Error   dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
 
     if (dst_err == FS_ERROR_NONE) {
         // Destination exists
@@ -1703,7 +1703,7 @@ fs_copy_tree(const char *src_dir,
         }
     } else if (dst_err == FS_ERROR_FILE_NOT_FOUND) {
         // Need to create the root destination directory
-        uint32_t mkerr = fs_make_directory(dst_dir, (flags & FS_OP_REUSE_DIRS) ? FS_OP_REUSE_DIRS
+        Fs_Error mkerr = fs_make_directory(dst_dir, (flags & FS_OP_REUSE_DIRS) ? FS_OP_REUSE_DIRS
                                                                                : FS_OP_NONE);
         if (mkerr != FS_ERROR_NONE) {
             fs_file_info_free(&src_info);
@@ -1722,7 +1722,7 @@ fs_copy_tree(const char *src_dir,
     FsWalker w = FS_INTERNAL_ZERO_INIT;
     if (!fs_walker_init(&w, src_dir)) {
         // fs_walker_init fills w.error
-        uint32_t we = w.error ? w.error : FS_ERROR_GENERIC;
+        Fs_Error we = w.error ? w.error : FS_ERROR_GENERIC;
         fs_walker_free(&w);
         return we;
     }
@@ -1731,7 +1731,7 @@ fs_copy_tree(const char *src_dir,
     const char *root_path = w.root_info.path;
     size_t root_len = root_path ? strlen(root_path) : 0;
 
-    uint32_t result = FS_ERROR_NONE;
+    Fs_Error result = FS_ERROR_NONE;
 
     const FsFileInfo *fi;
     while ((fi = fs_walker_next(&w)) != NULL) {
@@ -1762,7 +1762,7 @@ fs_copy_tree(const char *src_dir,
         fs_internal_normalize_seps(dst_path);
 
         if (fi->is_dir) {
-            uint32_t mkerr = fs_make_directory(dst_path, (flags & FS_OP_REUSE_DIRS) ? FS_OP_REUSE_DIRS
+            Fs_Error mkerr = fs_make_directory(dst_path, (flags & FS_OP_REUSE_DIRS) ? FS_OP_REUSE_DIRS
                                                                                     : FS_OP_NONE);
             if (mkerr != FS_ERROR_NONE) {
                 result = mkerr;
@@ -1772,7 +1772,7 @@ fs_copy_tree(const char *src_dir,
             FS_FREE(dst_path);
         } else {
             // Copy regular file (and symlinks as files at their target)
-            uint32_t cperr = fs_copy_file(full_src, dst_path, flags);
+            Fs_Error cperr = fs_copy_file(full_src, dst_path, flags);
             if (cperr != FS_ERROR_NONE) {
                 result = cperr;
                 FS_FREE(dst_path);
@@ -1795,7 +1795,7 @@ fs_copy_tree(const char *src_dir,
 }
 
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_get_file_info(const char *path,
                  FsFileInfo *out)
 {
@@ -1813,7 +1813,7 @@ fs_get_file_info(const char *path,
 
     fs_internal_log_trace_path("Get file info", path);
 
-    uint32_t err = fs_internal_fill_file_info(path, out);
+    Fs_Error err = fs_internal_fill_file_info(path, out);
     if (err != FS_ERROR_NONE) {
         memset(out, 0, sizeof *out);
         fs_internal_log_error_path("get file info", path, err);
@@ -1839,10 +1839,10 @@ fs_file_info_free(FsFileInfo *f)
     memset(f, 0, sizeof *f);
 }
 
-FSAPI uint32_t
+FSAPI Fs_Error
 fs_delete_tree(const char *root)
 {
-    uint32_t err = FS_ERROR_NONE;
+    Fs_Error err = FS_ERROR_NONE;
 
     FsWalker w = FS_INTERNAL_ZERO_INIT;
     if (!fs_walker_init(&w, root)) {
@@ -1862,13 +1862,13 @@ fs_delete_tree(const char *root)
 #ifdef _WIN32
             if (!DeleteFileA(fi->path)) {
                 DWORD last = GetLastError();
-                uint32_t mapped = fs_internal_win32_map_error(last);
+                Fs_Error mapped = fs_internal_win32_map_error(last);
                 fs_internal_set_error_if_none(&err, mapped);
                 fs_internal_log_error_path("delete file", fi->path, mapped);
             }
 #else
             if (unlink(fi->path) != 0) {
-                uint32_t mapped = fs_internal_posix_map_errno(errno);
+                Fs_Error mapped = fs_internal_posix_map_errno(errno);
                 fs_internal_set_error_if_none(&err, mapped);
                 fs_internal_log_error_path("delete file", fi->path, mapped);
             }
@@ -1881,13 +1881,13 @@ fs_delete_tree(const char *root)
 #ifdef _WIN32
             if (!DeleteFileA(fi->path)) {
                 DWORD last = GetLastError();
-                uint32_t mapped = fs_internal_win32_map_error(last);
+                Fs_Error mapped = fs_internal_win32_map_error(last);
                 fs_internal_set_error_if_none(&err, mapped);
                 fs_internal_log_error_path("delete file", fi->path, mapped);
             }
 #else
             if (unlink(fi->path) != 0) {
-                uint32_t mapped = fs_internal_posix_map_errno(errno);
+                Fs_Error mapped = fs_internal_posix_map_errno(errno);
                 fs_internal_set_error_if_none(&err, mapped);
                 fs_internal_log_error_path("delete file", fi->path, mapped);
             }
@@ -1924,13 +1924,13 @@ fs_delete_tree(const char *root)
 #ifdef _WIN32
         if (!RemoveDirectoryA(d)) {
             DWORD last = GetLastError();
-            uint32_t mapped = fs_internal_win32_map_error(last);
+            Fs_Error mapped = fs_internal_win32_map_error(last);
             fs_internal_set_error_if_none(&err, mapped);
             fs_internal_log_error_path("delete directory", d, mapped);
         }
 #else
         if (rmdir(d) != 0) {
-            uint32_t mapped = fs_internal_posix_map_errno(errno);
+            Fs_Error mapped = fs_internal_posix_map_errno(errno);
             fs_internal_set_error_if_none(&err, mapped);
             fs_internal_log_error_path("delete directory", d, mapped);
         }
@@ -1959,7 +1959,7 @@ fs_walker_init(FsWalker *w, const char *root)
     fs_internal_log_trace_path("Walking directory", root);
 
     FsFileInfo *ri = &w->root_info;
-    uint32_t err = fs_internal_fill_file_info(root, ri);
+    Fs_Error err = fs_internal_fill_file_info(root, ri);
     if (err != FS_ERROR_NONE) {
         w->has_error = 1;
         fs_internal_set_error_if_none(&w->error, err);
@@ -2053,7 +2053,7 @@ fs_walker_next(FsWalker *w)
             }
             fs_internal_normalize_seps(child);
 
-            uint32_t err = fs_internal_fill_file_info(child, &w->current);
+            Fs_Error err = fs_internal_fill_file_info(child, &w->current);
             if (err != FS_ERROR_NONE) {
                 w->has_error = 1;
                 fs_internal_set_error_if_none(&w->error, err);
@@ -2095,7 +2095,7 @@ fs_walker_next(FsWalker *w)
             }
             fs_internal_normalize_seps(child);
 
-            uint32_t err = fs_internal_fill_file_info(child, &w->current);
+            Fs_Error err = fs_internal_fill_file_info(child, &w->current);
             if (err != FS_ERROR_NONE) {
                 w->has_error = 1;
                 fs_internal_set_error_if_none(&w->error, err);

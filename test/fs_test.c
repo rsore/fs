@@ -95,7 +95,7 @@ MT_DEFINE_TEST(missing_file_errors)
     char file_path[256];
     void *data = NULL;
     size_t size = 0;
-    uint32_t err = FS_ERROR_NONE;
+    Fs_Error err = FS_ERROR_NONE;
     FsFileInfo info = FS_INTERNAL_ZERO_INIT;
     const char *root = "fs_test_out";
 
@@ -118,7 +118,7 @@ MT_DEFINE_TEST(make_directory_errors)
 {
     char nested[256];
     char sub[256];
-    uint32_t err = FS_ERROR_NONE;
+    Fs_Error err = FS_ERROR_NONE;
     const char *root = "fs_test_out";
 
     fs_test_reset_root(root);
@@ -139,7 +139,7 @@ MT_DEFINE_TEST(copy_move_file)
     char file_a[256];
     char file_b[256];
     char file_c[256];
-    uint32_t err = FS_ERROR_NONE;
+    Fs_Error err = FS_ERROR_NONE;
     void *data = NULL;
     size_t size = 0;
     const char *root = "fs_test_out";
