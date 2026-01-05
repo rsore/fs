@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -317,6 +318,49 @@ MT_DEFINE_TEST(walker_skips_symlinked_dir)
     }
 }
 
+#ifndef _WIN32
+MT_DEFINE_TEST(copy_tree_preserves_symlink)
+{
+    char src_dir[256];
+    char dst_dir[256];
+    char src_file[256];
+    char src_link[256];
+    char dst_link[256];
+    char link_target[256];
+    const char *root = "fs_test_out";
+
+    fs_test_reset_root(root);
+
+    fs_test_path(src_dir, sizeof(src_dir), root, "src");
+    fs_test_path(dst_dir, sizeof(dst_dir), root, "dst");
+    fs_test_path(src_file, sizeof(src_file), src_dir, "real.txt");
+    fs_test_path(src_link, sizeof(src_link), src_dir, "link.txt");
+    fs_test_path(dst_link, sizeof(dst_link), dst_dir, "link.txt");
+
+    MT_ASSERT_THAT(fs_make_directory(src_dir, FS_OP_NONE) == FS_ERROR_NONE);
+    MT_ASSERT_THAT(fs_write_file(src_file, "A", 1) == FS_ERROR_NONE);
+
+    if (symlink("real.txt", src_link) != 0) {
+        return; // Symlinks not available.
+    }
+
+    MT_ASSERT_THAT(fs_copy_tree(src_dir, dst_dir, FS_OP_NONE) == FS_ERROR_NONE);
+
+    {
+        struct stat st;
+        ssize_t len;
+
+        MT_ASSERT_THAT(lstat(dst_link, &st) == 0);
+        MT_CHECK_THAT(S_ISLNK(st.st_mode));
+
+        len = readlink(dst_link, link_target, sizeof(link_target) - 1);
+        MT_ASSERT_THAT(len >= 0);
+        link_target[len] = '\0';
+        MT_CHECK_THAT(strcmp(link_target, "real.txt") == 0);
+    }
+}
+#endif
+
 MT_DEFINE_TEST(crc32_matches_known_value)
 {
     char file_path[256];
@@ -346,6 +390,9 @@ main(void)
     MT_RUN_TEST(copy_move_tree);
     MT_RUN_TEST(walker_traversal);
     MT_RUN_TEST(walker_skips_symlinked_dir);
+#ifndef _WIN32
+    MT_RUN_TEST(copy_tree_preserves_symlink);
+#endif
     MT_RUN_TEST(crc32_matches_known_value);
 
     MT_PRINT_SUMMARY();

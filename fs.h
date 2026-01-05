@@ -68,6 +68,7 @@ typedef enum {
     FS_ERROR_FILE_ALREADY_EXISTS      = 5,
     FS_ERROR_FILE_IS_NOT_DIRECTORY    = 6,
     FS_ERROR_DIRECTORY_ALREADY_EXISTS = 7,
+    FS_ERROR_SYMLINK_NOT_SUPPORTED    = 8,
 } Fs_Error;
 
 #define FS_LOG_LEVEL_TRACE    0x01u
@@ -245,6 +246,7 @@ FSDEF void fs_walker_free(Fs_Walker *w);
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -639,7 +641,6 @@ fs_internal_fill_file_info(const char  *path,
 #endif
 }
 
-
 #ifdef _WIN32
 static inline void
 fs_internal_win32_walker_set_sys_error(Fs_Walker *w,
@@ -808,6 +809,7 @@ fs_strerror(Fs_Error err)
         case FS_ERROR_FILE_ALREADY_EXISTS:      return "File already exists";
         case FS_ERROR_DIRECTORY_ALREADY_EXISTS: return "Directory already exists";
         case FS_ERROR_FILE_IS_NOT_DIRECTORY:    return "File is not a directory";
+        case FS_ERROR_SYMLINK_NOT_SUPPORTED:    return "Symlink not supported";
     }
     return "<unhandled error code>";
 }
@@ -1649,6 +1651,46 @@ fs_move_tree(const char *src_dir,
     return FS_ERROR_NONE;
 }
 
+#ifndef _WIN32
+static inline Fs_Error
+fs_internal_posix_copy_symlink(const char *src,
+                               const char *dst)
+{
+    size_t cap = 256;
+    char *buf = NULL;
+
+    for (;;) {
+        char *nbuf = (char *)FS_REALLOC(buf, cap);
+        if (!nbuf) {
+            FS_FREE(buf);
+            return FS_ERROR_OUT_OF_MEMORY;
+        }
+        buf = nbuf;
+
+        ssize_t len = readlink(src, buf, cap - 1);
+        if (len < 0) {
+            Fs_Error mapped = fs_internal_posix_map_errno(errno);
+            FS_FREE(buf);
+            return mapped;
+        }
+        if ((size_t)len < cap - 1) {
+            buf[len] = '\0';
+            break;
+        }
+        cap *= 2;
+    }
+
+    if (symlink(buf, dst) != 0) {
+        Fs_Error mapped = fs_internal_posix_map_errno(errno);
+        FS_FREE(buf);
+        return mapped;
+    }
+
+    FS_FREE(buf);
+    return FS_ERROR_NONE;
+}
+#endif
+
 FSDEF Fs_Error
 fs_copy_tree(const char *src_dir,
              const char *dst_dir,
@@ -1752,7 +1794,30 @@ fs_copy_tree(const char *src_dir,
         }
         fs_internal_normalize_seps(dst_path);
 
+        if (fi->is_symlink) {
+#ifdef _WIN32
+            fs_internal_log_error_path("copy directory tree", full_src, FS_ERROR_SYMLINK_NOT_SUPPORTED);
+            result = FS_ERROR_SYMLINK_NOT_SUPPORTED;
+            FS_FREE(dst_path);
+            break;
+#else
+            Fs_Error lerr = fs_internal_posix_copy_symlink(full_src, dst_path);
+            if (lerr != FS_ERROR_NONE) {
+                result = lerr;
+                FS_FREE(dst_path);
+                break;
+            }
+            FS_FREE(dst_path);
+            continue;
+#endif
+        }
+
         if (fi->is_dir) {
+            if (rel[0] == '\0') {
+                // Root already ensured above; don't re-create it.
+                FS_FREE(dst_path);
+                continue;
+            }
             Fs_Error mkerr = fs_make_directory(dst_path, (flags & FS_OP_REUSE_DIRS) ? FS_OP_REUSE_DIRS
                                                                                     : FS_OP_NONE);
             if (mkerr != FS_ERROR_NONE) {
