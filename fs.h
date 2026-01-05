@@ -1629,7 +1629,7 @@ fs_move_tree(const char *src_dir,
     fs_internal_log_trace_path2("Moving directory tree", src_dir, dst_dir);
 
     // Make sure src_dir exists and is actually a directory.
-    FsFileInfo info = {0};
+    FsFileInfo info = FS_INTERNAL_ZERO_INIT;
     uint32_t info_err = fs_get_file_info(src_dir, &info);
     if (info_err != FS_ERROR_NONE) {
         return info_err;
@@ -1671,7 +1671,7 @@ fs_copy_tree(const char *src_dir,
 
     uint32_t err;
     // Check that src_dir exists and is a directory
-    FsFileInfo src_info = {0};
+    FsFileInfo src_info = FS_INTERNAL_ZERO_INIT;
     err = fs_get_file_info(src_dir, &src_info);
     if (err != FS_ERROR_NONE) {
         return err;
@@ -1683,7 +1683,7 @@ fs_copy_tree(const char *src_dir,
     }
 
     // Check / create dst_dir
-    FsFileInfo dst_info = {0};
+    FsFileInfo dst_info = FS_INTERNAL_ZERO_INIT;
     uint32_t   dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
 
     if (dst_err == FS_ERROR_NONE) {
@@ -1719,7 +1719,7 @@ fs_copy_tree(const char *src_dir,
     fs_file_info_free(&dst_info);
 
     // Initialize walker on src_dir
-    FsWalker w = {0};
+    FsWalker w = FS_INTERNAL_ZERO_INIT;
     if (!fs_walker_init(&w, src_dir)) {
         // fs_walker_init fills w.error
         uint32_t we = w.error ? w.error : FS_ERROR_GENERIC;
