@@ -1,5 +1,5 @@
 /**
- * fs.h — Cross-platform API for file system interaction,
+ * fs.h ? Cross-platform API for file system interaction,
  *        targeting Windows and POSIX.
  *
  * ~~ LIBRARY INTEGRATION ~~
@@ -20,6 +20,8 @@
  *  - FS_REALLOC(ptr, new_size) && FS_FREE(ptr) .. Define custom allocators for `fs.h`.
  *                                                 Must match the semantics of libc realloc and free.
  *                                                  Default: `libc realloc` and `libc free`.
+ *  - FS_EMBED_LICENSE .......................... Embeds BSD-3-Clause license text
+ *                                                 in the program binary.
  *  - FS_LOG(level, msg) ........................ If defined, used to log info and errors.
  *                                                 level is `FS_LOG_LEVEL_*` and msg is NUL-terminated cstr.
  *                                                 Example: `#define FS_LOG(level, msg) \
@@ -27,7 +29,7 @@
  *  - FS_USE_SIMPLE_LOGGER ...................... If defined, sets `FS_LOG(level, msg)` to a basic stderr logger.
  *
  * ~~ LICENSE ~~
- * `fs.h` is licenses under the MIT license. Full license text is
+ * `fs.h` is licensed under the 3-Clause BSD license. Full license text is
  * at the end of this file.
  */
 
@@ -110,6 +112,12 @@ FSAPI void fs_set_log_mask(unsigned int mask);
 
 // Returns string description of log level.
 FSAPI const char *fs_log_level_to_str(unsigned int level);
+
+// Returns the BSD-3-Clause license text of fs.h as a NUL-terminated C string.
+// The returned string has static storage duration and must not be freed.
+// Returns NULL if the license text was not embedded
+// (i.e. FS_EMBED_LICENSE was not defined in the FS_IMPLEMENTATION translation unit).
+FSAPI const char *fs_license_text(void);
 
 
 typedef struct {
@@ -1854,8 +1862,9 @@ fs_delete_tree(const char *root)
 #ifdef _WIN32
             if (!DeleteFileA(fi->path)) {
                 DWORD last = GetLastError();
-                fs_internal_set_error_if_none(&err, FS_ERROR_GENERIC);
-                fs_internal_log_error_path("delete file", fi->path, FS_ERROR_GENERIC);
+                uint32_t mapped = fs_internal_win32_map_error(last);
+                fs_internal_set_error_if_none(&err, mapped);
+                fs_internal_log_error_path("delete file", fi->path, mapped);
             }
 #else
             if (unlink(fi->path) != 0) {
@@ -2126,31 +2135,117 @@ fs_walker_free(FsWalker *w)
     memset(w, 0, sizeof *w);
 }
 
+#if defined(FS_EMBED_LICENSE)
+/**
+ * LICENSE EMBEDDING
+ * If FS_EMBED_LICENSE is defined in the same translation unit as
+ * FS_IMPLEMENTATION, fs.h embeds its BSD-3-Clause license text into the
+ * final program binary (as a static string).
+ *
+ * This can make it easier to satisfy license notice requirements for
+ * binary distributions. You are still responsible for complying with the
+ * BSD-3-Clause terms for your distribution.
+ *
+ * The author of this library considers embedding this notice in the
+ * binary to be an acceptable way of reproducing the license text.
+ */
+
+
+// Must be implementation TU
+#  if !defined(FS_IMPLEMENTATION)
+#    error "FS_EMBED_LICENSE must be defined in the same translation unit as FS_IMPLEMENTATION."
+#  endif
+
+// Toolchain check
+#  if !defined(_MSC_VER) && !defined(__clang__) && !defined(__GNUC__)
+#    error "FS_EMBED_LICENSE is not supported on this toolchain (supported: MSVC, clang, GCC)."
+#  endif
+
+
+// toolchain / platform attributes
+#  if defined(_MSC_VER)
+#    pragma section(".fs_lic", read)
+#    define FS_INTERNAL_ALLOCATE_LICENSE __declspec(allocate(".fs_lic"))
+#    define FS_INTERNAL_USED
+#    ifdef __cplusplus
+#      define FS_INTERNAL_DEF extern "C"
+#    else
+#      define FS_INTERNAL_DEF extern
+#    endif
+#    if defined(_M_IX86)
+#      pragma comment(linker, "/INCLUDE:_fs_embedded_license")
+#      pragma comment(linker, "/INCLUDE:_fs_embedded_license_ptr")
+#    else
+#      pragma comment(linker, "/INCLUDE:fs_embedded_license")
+#      pragma comment(linker, "/INCLUDE:fs_embedded_license_ptr")
+#    endif
+#  else /* GCC / Clang */
+#    if defined(__APPLE__) || defined(__MACH__)
+#      define FS_INTERNAL_ALLOCATE_LICENSE __attribute__((section("__DATA,__fs_lic"), used))
+#    else
+#      define FS_INTERNAL_ALLOCATE_LICENSE __attribute__((section(".fs_lic"), used))
+#    endif
+#    define FS_INTERNAL_USED __attribute__((used))
+#    define FS_INTERNAL_DEF
+#  endif
+
+#  ifdef __cplusplus
+extern "C" {
+#  endif
+
+FS_INTERNAL_DEF FS_INTERNAL_ALLOCATE_LICENSE
+const char fs_embedded_license[] =
+    "BSD-3-CLAUSE LICENSE\n"
+    "\n"
+    "Copyright 2025 rsore\n"
+    "\n"
+    "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
+    "\n"
+    "1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.\n"
+    "\n"
+    "2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.\n"
+    "\n"
+    "3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.\n"
+    "\n"
+    "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n";
+
+FS_INTERNAL_DEF FS_INTERNAL_USED
+const char *fs_embedded_license_ptr = fs_embedded_license;
+
+#  ifdef __cplusplus
+} /* extern "C" */
+#  endif
+
+#endif // FS_EMBED_LICENSE
+
+FSAPI const char *
+fs_license_text(void)
+{
+#ifdef FS_EMBED_LICENSE
+    return fs_embedded_license;
+#else
+    return NULL;
+#endif
+}
+
 
 #endif // FS_IMPLEMENTATION
 
 #endif // FS_H_INCLUDED_
 
+
 /**
- * MIT License
+ * BSD-3-CLAUSE LICENSE
  *
- * Copyright (c) 2025 Ruben Sørensen
+ * Copyright 2025 rsore
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
+ * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
  *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
