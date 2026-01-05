@@ -1,101 +1,80 @@
-#define FSAPI static inline
-#define FS_WIN32_USE_FORWARDSLASH_SEPARATORS
+#include <stdio.h>
+#include <string.h>
+
+#define FS_USE_SIMPLE_LOGGER
 #define FS_IMPLEMENTATION
 #include "fs.h"
 
-int
-main(void)
+static void
+my_log(unsigned int  level,
+       const char   *msg,
+       void         *user_data)
 {
-    FsFileInfo file_info = FS_ZERO_INIT_;
-    uint32_t err; uint64_t sys_err;
-    if ((err = fs_get_file_info(".helloworld", &file_info, &sys_err)) != FS_ERROR_NONE) {
-        fprintf(stderr, "Error %u: %s\n", (uint32_t)sys_err, fs_strerror(err));
-        return 1;
+    if (level == FS_LOG_LEVEL_INFO) {
+        printf("[INFO] %s\n", msg);
+    } else if (level == FS_LOG_LEVEL_ERROR) {
+        fprintf(stderr, "[ERROR] %s\n", msg);
+    } else if (level == FS_LOG_LEVEL_TRACE) {
+        fprintf(stderr, "[TRACE] %s\n", msg);
     }
-    printf("file_info::path       = %s\n", file_info.path);
-    printf("file_info::is_dir     = %s\n", file_info.is_dir ? "true" : "false");
-    printf("file_info::is_symlink = %s\n", file_info.is_symlink ? "true" : "false");
-    printf("file_info::size = %zu\n", file_info.size);
-    printf("file_info::mtime_sec = %zu\n", file_info.mtime_sec);
-    printf("file_info::mode = ");
-    if (file_info.mode & FS_MODE_READONLY) printf("| FS_MODE_READONLY |");
-    if (file_info.mode & FS_MODE_HIDDEN)   printf("| FS_MODE_HIDDEN |");
-    if (file_info.mode & FS_MODE_SYSTEM)   printf("| FS_MODE_SYSTEM |");
-    printf("\n\n");
-    fs_file_info_free(&file_info);
+}
 
-    FsWalker walker = FS_ZERO_INIT_;
-    if (!fs_walker_init(&walker, "test/")) {
-        printf("Error: %s\n", fs_strerror(walker.error));
-        return 1;
-    }
-    const FsFileInfo *fi;
-    while ((fi = fs_walker_next(&walker))) {
-        if (!fi->is_dir && !fi->is_symlink) {
-            printf("Filepath: %s\n", fi->path);
-        }
-    }
-    if (walker.has_error) {
-        printf("Error: %s\n", fs_strerror(walker.error));
-        fs_walker_free(&walker);
-        return 1;
-    }
+int main(void) {
+    const char *root = "fs_demo";
+    const char *missing_file = "fs_demo/missing.txt";
+    const char *file_a = "fs_demo/a.txt";
+    const char *file_b = "fs_demo/b.txt";
+    const char *file_c = "fs_demo/c.txt";
+    const char *dir_sub = "fs_demo/sub";
+    const char *dir_conflict = "fs_demo/conflict";
+    const char *tree_copy = "fs_demo_copy";
 
-    fs_walker_free(&walker);
+    // Clean start (silent)
+    fs_set_logger(my_log, NULL);
+    (void)fs_delete_tree(root);
 
-    char buf[4096];
-    size_t buf_size = 4096;
-    size_t bytes_read;
-    if ((err = fs_read_file_into("main.c", buf, buf_size, &bytes_read, NULL)) != FS_ERROR_NONE) {
-        fprintf(stderr, "Error: %s\n", fs_strerror(err));
-        return 1;
+    // Re-enable logging (simple logger)
+    // FS_USE_SIMPLE_LOGGER already wires FS_LOG to stderr.
+
+    // Expected failures
+    void *data = NULL;
+    size_t size = 0;
+    if (fs_read_file(missing_file, &data, &size) == FS_ERROR_NONE) {
+        FS_FREE(data);
     }
+    (void)fs_delete_file(missing_file);
 
-    fs_write_file("test - Copy", buf, bytes_read, NULL);
+    // Create root (success)
+    (void)fs_make_directory(root, FS_OP_NONE);
 
-    uint32_t error; uint64_t sys_error;
-    if ((error = fs_delete_tree("test - Copy", &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Fail: create nested directory without parent
+    (void)fs_make_directory("fs_demo/nested/child", FS_OP_NONE);
 
-    if ((error = fs_copy_file("main.c", "main.c.copy.coolcopy", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Create file and then collide with directory creation
+    (void)fs_write_file(file_a, "hello", 5);
+    (void)fs_make_directory(file_a, FS_OP_NONE);
 
-    if ((error = fs_move_file("main.c.copy.coolcopy", "boof", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Create subdir and then try to move file onto it
+    (void)fs_make_directory(dir_sub, FS_OP_NONE);
+    (void)fs_move_file(file_a, dir_sub, FS_OP_NONE);
 
-    if ((error = fs_copy_tree("test", "copied_test", FS_OP_REUSE_DIRS | FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Copy to existing file without overwrite
+    (void)fs_write_file(file_b, "world", 5);
+    (void)fs_copy_file(file_b, file_a, FS_OP_NONE);
 
-    if ((error = fs_move_file("copied_test", "renamed_test", FS_OP_OVERWRITE, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Successful copy + move
+    (void)fs_copy_file(file_b, file_c, FS_OP_OVERWRITE);
+    (void)fs_move_file(file_c, "fs_demo/moved.txt", FS_OP_OVERWRITE);
 
-    if ((error = fs_move_tree("renamed_test", "renamed_as_tree", FS_OP_OVERWRITE | FS_OP_REUSE_DIRS, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
+    // Successful tree copy
+    (void)fs_copy_tree(root, tree_copy, FS_OP_REUSE_DIRS);
 
-    uint32_t crc32_foo;
-    if ((error = fs_crc32_file("test/foo.txt", &crc32_foo, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
-    uint32_t crc32_bar;
-    if ((error = fs_crc32_file("test/bar.txt", &crc32_bar, &sys_error)) != FS_ERROR_NONE) {
-        printf("Error %u: %s\n", (unsigned int)sys_error, fs_strerror(error));
-        return 1;
-    }
-    printf("test/foo crc32: %x\n", crc32_foo);
-    printf("test/bar crc32: %x\n", crc32_bar);
+    // Directory conflict: file where directory is expected
+    (void)fs_write_file(dir_conflict, "not a dir", 9);
+    (void)fs_copy_tree(root, dir_conflict, FS_OP_REUSE_DIRS);
 
+    // Clean up
+    (void)fs_delete_tree(tree_copy);
+    (void)fs_delete_tree(root);
     return 0;
 }
