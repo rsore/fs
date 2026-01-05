@@ -2099,7 +2099,7 @@ fs_walker_next(Fs_Walker *w)
 
             w->current.path = child;
 
-            if (w->current.is_dir) {
+            if (w->current.is_dir && !w->current.is_symlink) {
                 if (!fs_internal_walker_push_frame(w, child)) {
                     w->current.path = NULL;
                     FS_FREE(child);

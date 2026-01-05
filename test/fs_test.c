@@ -10,6 +10,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #if defined(_WIN32) && !defined(FS_WIN32_USE_FORWARDSLASH_SEPARATORS)
 #define FS_TEST_PATH_SEP "\\"
@@ -253,6 +258,65 @@ MT_DEFINE_TEST(walker_traversal)
     fs_walker_free(&w);
 }
 
+MT_DEFINE_TEST(walker_skips_symlinked_dir)
+{
+    char real_dir[256];
+    char real_file[256];
+    char link_path[256];
+    char link_file[256];
+    int link_ok = 0;
+    const char *root = "fs_test_out";
+
+    fs_test_reset_root(root);
+
+    fs_test_path(real_dir, sizeof(real_dir), root, "real");
+    fs_test_path(real_file, sizeof(real_file), real_dir, "a.txt");
+    fs_test_path(link_path, sizeof(link_path), root, "link");
+    fs_test_path(link_file, sizeof(link_file), link_path, "a.txt");
+
+    MT_ASSERT_THAT(fs_make_directory(real_dir, FS_OP_NONE) == FS_ERROR_NONE);
+    MT_ASSERT_THAT(fs_write_file(real_file, "A", 1) == FS_ERROR_NONE);
+
+#ifdef _WIN32
+#ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
+#endif
+    {
+        DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+        link_ok = CreateSymbolicLinkA(link_path, real_dir, flags) ? 1 : 0;
+    }
+#else
+    link_ok = (symlink(real_dir, link_path) == 0) ? 1 : 0;
+#endif
+
+    if (!link_ok) {
+        return; // Symlinks not available or not permitted on this platform.
+    }
+
+    {
+        Fs_Walker w = FS_INTERNAL_ZERO_INIT;
+        const Fs_FileInfo *fi = NULL;
+        int saw_link = 0;
+        int saw_link_file = 0;
+
+        MT_ASSERT_THAT(fs_walker_init(&w, root));
+
+        while ((fi = fs_walker_next(&w)) != NULL) {
+            if (strcmp(fi->path, link_path) == 0) {
+                saw_link = 1;
+            }
+            if (strcmp(fi->path, link_file) == 0) {
+                saw_link_file = 1;
+            }
+        }
+
+        fs_walker_free(&w);
+
+        MT_CHECK_THAT(saw_link);
+        MT_CHECK_THAT(!saw_link_file);
+    }
+}
+
 MT_DEFINE_TEST(crc32_matches_known_value)
 {
     char file_path[256];
@@ -281,6 +345,7 @@ main(void)
     MT_RUN_TEST(copy_move_file);
     MT_RUN_TEST(copy_move_tree);
     MT_RUN_TEST(walker_traversal);
+    MT_RUN_TEST(walker_skips_symlinked_dir);
     MT_RUN_TEST(crc32_matches_known_value);
 
     MT_PRINT_SUMMARY();
