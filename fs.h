@@ -1,5 +1,5 @@
 /**
- * fs.h ? Cross-platform API for file system interaction,
+ * fs.h - Cross-platform API for file system interaction,
  *        targeting Windows and POSIX.
  *
  * ~~ LIBRARY INTEGRATION ~~
@@ -13,16 +13,16 @@
  * preprocessor definitions before including the `fs.h`:
  *  - FS_IMPLEMENTATION .......................... Include all function definitions.
  *  - FSAPI ...................................... Prefixed to all functions.
- *                                                  Example: `#define FSAPI static inline`
- *                                                  Default: Nothing
+ *                                                 Example: `#define FSAPI static inline`
+ *                                                 Default: Nothing
  *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS ....... Use `/` as path separator on Windows,
  *                                                 instead of the default, which is '\'.
  *  - FS_REALLOC(ptr, new_size) && FS_FREE(ptr) .. Define custom allocators for `fs.h`.
  *                                                 Must match the semantics of libc realloc and free.
- *                                                  Default: `libc realloc` and `libc free`.
- *  - FS_EMBED_LICENSE .......................... Embeds BSD-3-Clause license text
+ *                                                 Default: `libc realloc` and `libc free`.
+ *  - FS_EMBED_LICENSE ........................... Embeds BSD-3-Clause license text
  *                                                 in the program binary.
- *  - FS_LOG(level, msg) ........................ If defined, used to log info and errors.
+ *  - FS_LOG(level, msg) ......................... If defined, used to log info and errors.
  *                                                 level is `FS_LOG_LEVEL_*` and msg is NUL-terminated cstr.
  *                                                 Example: `#define FS_LOG(level, msg) \
  *                                                               fprintf(stderr, "%s: %s\n", fs_log_level_to_str((level)), (msg))`
