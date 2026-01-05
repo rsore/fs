@@ -12,8 +12,8 @@
  * Certain behavior of fs.h can be customized by defining some
  * preprocessor definitions before including the `fs.h`:
  *  - FS_IMPLEMENTATION .......................... Include all function definitions.
- *  - FSAPI ...................................... Prefixed to all functions.
- *                                                 Example: `#define FSAPI static inline`
+ *  - FSDEF ...................................... Prefixed to all functions.
+ *                                                 Example: `#define FSDEF static inline`
  *                                                 Default: Nothing
  *  - FS_WIN32_USE_FORWARDSLASH_SEPARATORS ....... Use `/` as path separator on Windows,
  *                                                 instead of the default, which is '\'.
@@ -39,8 +39,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef FSAPI
-#    define FSAPI
+#ifndef FSDEF
+#    define FSDEF
 #endif
 
 #if defined(FS_REALLOC) != defined(FS_FREE)
@@ -99,25 +99,25 @@ extern "C" {
 #endif
 
 // Returns string description of error code.
-FSAPI const char *fs_strerror(Fs_Error err);
+FSDEF const char *fs_strerror(Fs_Error err);
 
 typedef void (*Fs_LogFn)(unsigned int level, const char *msg, void *user_data);
 
 // Sets a global logger for fs.h. Overrides FS_LOG(). Passing NULL disables logging.
 // Note: Global and not thread-safe; configure at startup or guard with your own locks.
-FSAPI void fs_set_logger(Fs_LogFn logger, void *user_data);
+FSDEF void fs_set_logger(Fs_LogFn logger, void *user_data);
 
 // Sets the runtime log mask. Default is FS_LOG_LEVEL_ALL.
-FSAPI void fs_set_log_mask(unsigned int mask);
+FSDEF void fs_set_log_mask(unsigned int mask);
 
 // Returns string description of log level.
-FSAPI const char *fs_log_level_to_str(unsigned int level);
+FSDEF const char *fs_log_level_to_str(unsigned int level);
 
 // Returns the BSD-3-Clause license text of fs.h as a NUL-terminated C string.
 // The returned string has static storage duration and must not be freed.
 // Returns NULL if the license text was not embedded
 // (i.e. FS_EMBED_LICENSE was not defined in the FS_IMPLEMENTATION translation unit).
-FSAPI const char *fs_license_text(void);
+FSDEF const char *fs_license_text(void);
 
 
 typedef struct {
@@ -132,86 +132,59 @@ typedef struct {
 } Fs_FileInfo;
 
 // Query metadata for a single path. On success, out->path is allocated and normalized.
-FSAPI Fs_Error fs_get_file_info(const char *path, Fs_FileInfo *out);
+FSDEF Fs_Error fs_get_file_info(const char *path, Fs_FileInfo *out);
 
 // Frees Fs_FileInfo resources. Safe with NULL or zero-initialized structs.
-FSAPI void fs_file_info_free(Fs_FileInfo *f);
+FSDEF void fs_file_info_free(Fs_FileInfo *f);
 
 
 // Returns non-zero if path exists (file/dir/symlink). On error, returns 0.
-FSAPI int fs_exists(const char *path);
+FSDEF int fs_exists(const char *path);
 
 // Returns non-zero if path exists and is a regular file.
-FSAPI int fs_is_file(const char *path);
+FSDEF int fs_is_file(const char *path);
 
 // Returns non-zero if path exists and is a directory.
-FSAPI int fs_is_dir(const char *path);
+FSDEF int fs_is_dir(const char *path);
 
 
 // Reads entire file into a newly allocated buffer. Buffer is binary (not NUL-terminated).
 // Caller frees with FS_FREE(). Empty files return size 0 with a valid buffer.
-FSAPI Fs_Error
-fs_read_file(const char       *path,
-                    void     **data_out,
-                    size_t    *size_out);
+FSDEF Fs_Error fs_read_file(const char *path, void **data_out, size_t *size_out);
 
 // Reads up to buf_size bytes into buffer. Buffer is binary (not NUL-terminated).
-FSAPI Fs_Error
-fs_read_file_into(const char *path,
-                  void       *buffer,
-                  size_t      buf_size,
-                  size_t     *bytes_read_out);
+FSDEF Fs_Error fs_read_file_into(const char *path, void *buffer, size_t buf_size, size_t *bytes_read_out);
 
 // Writes size bytes to path. Overwrites or creates. Binary mode on all platforms.
-FSAPI Fs_Error
-fs_write_file(const char *path,
-              const void *data,
-              size_t      size);
+FSDEF Fs_Error fs_write_file(const char *path, const void *data, size_t size);
 
 // Moves a regular file from src to dst. Honors FS_OP_OVERWRITE.
-FSAPI Fs_Error
-fs_move_file(const char *src,
-             const char *dst,
-             uint32_t    flags);
+FSDEF Fs_Error fs_move_file(const char *src, const char *dst, uint32_t flags);
 
 // Copies a regular file from src to dst. Honors FS_OP_OVERWRITE.
-FSAPI Fs_Error
-fs_copy_file(const char *src,
-             const char *dst,
-             uint32_t    flags);
+FSDEF Fs_Error fs_copy_file(const char *src, const char *dst, uint32_t flags);
 
 // Deletes a file or symlink at path.
-FSAPI Fs_Error
-fs_delete_file(const char *path);
+FSDEF Fs_Error fs_delete_file(const char *path);
 
 // Computes CRC-32 of a file.
-FSAPI Fs_Error
-fs_crc32_file(const char *path,
-              uint32_t   *crc_out);
+FSDEF Fs_Error fs_crc32_file(const char *path, uint32_t *crc_out);
 
 
 // Creates a single directory at path. Parents must already exist.
 // Use FS_OP_REUSE_DIRS to treat existing directories as success.
-FSAPI Fs_Error
-fs_make_directory(const char *path,
-                  uint32_t    flags);
+FSDEF Fs_Error fs_make_directory(const char *path, uint32_t flags);
 
 // Recursively moves a directory tree from src_dir to dst_dir.
 // Honors FS_OP_OVERWRITE and FS_OP_REUSE_DIRS.
-FSAPI Fs_Error
-fs_move_tree(const char *src_dir,
-             const char *dst_dir,
-             uint32_t    flags);
+FSDEF Fs_Error fs_move_tree(const char *src_dir, const char *dst_dir, uint32_t flags);
 
 // Recursively copies a directory tree from src_dir to dst_dir.
 // Honors FS_OP_OVERWRITE and FS_OP_REUSE_DIRS.
-FSAPI Fs_Error
-fs_copy_tree(const char *src_dir,
-             const char *dst_dir,
-             uint32_t    flags);
+FSDEF Fs_Error fs_copy_tree(const char *src_dir, const char *dst_dir, uint32_t flags);
 
 // Recursively deletes a directory tree at root. Symlinked dirs are not followed.
-FSAPI Fs_Error fs_delete_tree(const char *root);
+FSDEF Fs_Error fs_delete_tree(const char *root);
 
 
 // Walker for depth-first, pre-order traversal.
@@ -235,14 +208,14 @@ typedef struct Fs_Walker {
 } Fs_Walker;
 
 // Initializes a walker rooted at root. Returns 1 on success, 0 on failure.
-FSAPI int fs_walker_init(Fs_Walker *w, const char *root);
+FSDEF int fs_walker_init(Fs_Walker *w, const char *root);
 
 // Advances the walker and returns the next entry, or NULL on finish/error.
 // Returned Fs_FileInfo is owned by the walker and valid until next call.
-FSAPI Fs_FileInfo *fs_walker_next(Fs_Walker *w);
+FSDEF Fs_FileInfo *fs_walker_next(Fs_Walker *w);
 
 // Frees all walker resources. Safe to call multiple times.
-FSAPI void fs_walker_free(Fs_Walker *w);
+FSDEF void fs_walker_free(Fs_Walker *w);
 
 
 #ifdef __cplusplus
@@ -298,8 +271,9 @@ static Fs_LogFn      fs_internal_global_log_fn        = NULL;
 static void         *fs_internal_global_log_user_data = NULL;
 static unsigned int  fs_internal_global_log_mask      = FS_LOG_LEVEL_ALL;
 
-static void
-fs_internal_log_emit(unsigned int level, const char *msg)
+static inline void
+fs_internal_log_emit(unsigned int  level,
+                     const char   *msg)
 {
     if (fs_internal_global_log_fn) {
         if (fs_internal_global_log_mask & level) {
@@ -316,7 +290,7 @@ fs_internal_log_emit(unsigned int level, const char *msg)
 #endif
 }
 
-static int
+static inline int
 fs_internal_log_is_enabled(unsigned int level)
 {
     if (fs_internal_global_log_fn) {
@@ -331,8 +305,10 @@ fs_internal_log_is_enabled(unsigned int level)
 #endif
 }
 
-static void
-fs_internal_logf(unsigned int level, const char *fmt, ...)
+static inline void
+fs_internal_logf(unsigned int  level,
+                 const char   *fmt,
+                 ...)
 {
     if (!fs_internal_log_is_enabled(level)) {
         return;
@@ -359,8 +335,8 @@ fs_internal_logf(unsigned int level, const char *fmt, ...)
     }
 
     // Message was truncated, allocate a bigger buffer
-    size_t full_len = (size_t)needed + 1;
-    char *dynamic_buf = (char *)FS_REALLOC(NULL, full_len);
+    size_t  full_len    = (size_t)needed + 1;
+    char   *dynamic_buf = (char *)FS_REALLOC(NULL, full_len);
     if (!dynamic_buf) {
         // OOM, fall back to truncated version
         fs_internal_log_emit(level, stack_buf);
@@ -381,15 +357,16 @@ fs_internal_logf(unsigned int level, const char *fmt, ...)
 static inline char *
 fs_internal_strdup(const char *s)
 {
-    size_t n = strlen(s) + 1;
-    char *p = (char *)FS_REALLOC(NULL, n);
+    size_t  n = strlen(s) + 1;
+    char   *p = (char *)FS_REALLOC(NULL, n);
     if (!p) return NULL;
     memcpy(p, s, n);
     return p;
 }
 
 static inline void
-fs_internal_set_error_if_none(Fs_Error *dst, Fs_Error err)
+fs_internal_set_error_if_none(Fs_Error *dst,
+                              Fs_Error  err)
 {
     if (*dst == FS_ERROR_NONE) {
         *dst = err;
@@ -397,7 +374,9 @@ fs_internal_set_error_if_none(Fs_Error *dst, Fs_Error err)
 }
 
 static inline void
-fs_internal_log_error_path(const char *context, const char *path, Fs_Error err)
+fs_internal_log_error_path(const char *context,
+                           const char *path,
+                           Fs_Error    err)
 {
     if (err == FS_ERROR_NONE) {
         return;
@@ -410,7 +389,10 @@ fs_internal_log_error_path(const char *context, const char *path, Fs_Error err)
 }
 
 static inline void
-fs_internal_log_error_path2(const char *context, const char *path_a, const char *path_b, Fs_Error err)
+fs_internal_log_error_path2(const char *context,
+                            const char *path_a,
+                            const char *path_b,
+                            Fs_Error    err)
 {
     if (err == FS_ERROR_NONE) {
         return;
@@ -426,7 +408,8 @@ fs_internal_log_error_path2(const char *context, const char *path_a, const char 
 }
 
 static inline void
-fs_internal_log_info_path(const char *context, const char *path)
+fs_internal_log_info_path(const char *context,
+                          const char *path)
 {
     if (path) {
         fs_internal_logf(FS_LOG_LEVEL_INFO, "%s '%s'", context, path);
@@ -436,7 +419,8 @@ fs_internal_log_info_path(const char *context, const char *path)
 }
 
 static inline void
-fs_internal_log_trace_path(const char *context, const char *path)
+fs_internal_log_trace_path(const char *context,
+                           const char *path)
 {
     if (path) {
         fs_internal_logf(FS_LOG_LEVEL_TRACE, "%s '%s'", context, path);
@@ -446,7 +430,9 @@ fs_internal_log_trace_path(const char *context, const char *path)
 }
 
 static inline void
-fs_internal_log_info_path2(const char *context, const char *path_a, const char *path_b)
+fs_internal_log_info_path2(const char *context,
+                           const char *path_a,
+                           const char *path_b)
 {
     if (path_a && path_b) {
         fs_internal_logf(FS_LOG_LEVEL_INFO, "%s '%s' -> '%s'", context, path_a, path_b);
@@ -458,7 +444,9 @@ fs_internal_log_info_path2(const char *context, const char *path_a, const char *
 }
 
 static inline void
-fs_internal_log_trace_path2(const char *context, const char *path_a, const char *path_b)
+fs_internal_log_trace_path2(const char *context,
+                            const char *path_a,
+                            const char *path_b)
 {
     if (path_a && path_b) {
         fs_internal_logf(FS_LOG_LEVEL_TRACE, "%s '%s' -> '%s'", context, path_a, path_b);
@@ -487,7 +475,8 @@ fs_internal_is_sep(char c)
 #endif
 
 static inline char *
-fs_internal_join(const char *a, const char *b)
+fs_internal_join(const char *a,
+                 const char *b)
 {
     size_t la = strlen(a);
     size_t lb = strlen(b);
@@ -500,8 +489,8 @@ fs_internal_join(const char *a, const char *b)
         need_sep = 0;
     }
 
-    size_t len = la + (need_sep ? 1 : 0) + lb + 1;
-    char *p = (char *)FS_REALLOC(NULL, len);
+    size_t  len = la + (need_sep ? 1 : 0) + lb + 1;
+    char   *p   = (char *)FS_REALLOC(NULL, len);
     if (!p) return NULL;
 
     if (need_sep) {
@@ -529,7 +518,7 @@ fs_internal_normalize_seps(char *p)
 }
 
 #ifdef _WIN32
-static Fs_Error
+static inline Fs_Error
 fs_internal_win32_map_error(DWORD err)
 {
     switch (err) {
@@ -554,7 +543,7 @@ fs_internal_win32_map_error(DWORD err)
     }
 }
 #else
-static Fs_Error
+static inline Fs_Error
 fs_internal_posix_map_errno(int e)
 {
     switch (e) {
@@ -576,7 +565,7 @@ fs_internal_posix_map_errno(int e)
 #endif
 
 #ifdef _WIN32
-static uint64_t
+static inline uint64_t
 fs_internal_win32_filetime_to_unix_seconds(FILETIME ft)
 {
     ULARGE_INTEGER t;
@@ -589,9 +578,9 @@ fs_internal_win32_filetime_to_unix_seconds(FILETIME ft)
 }
 #endif
 
-static Fs_Error
-fs_internal_fill_file_info(const char *path,
-                   Fs_FileInfo *out)
+static inline Fs_Error
+fs_internal_fill_file_info(const char  *path,
+                           Fs_FileInfo *out)
 {
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA fad;
@@ -652,22 +641,24 @@ fs_internal_fill_file_info(const char *path,
 
 
 #ifdef _WIN32
-static void
-fs_internal_win32_walker_set_sys_error(Fs_Walker *w, DWORD err)
+static inline void
+fs_internal_win32_walker_set_sys_error(Fs_Walker *w,
+                                       DWORD      err)
 {
     w->has_error = 1;
     fs_internal_set_error_if_none(&w->error, fs_internal_win32_map_error(err));
 }
 #else
-static void
-fs_internal_posix_walker_set_sys_error(Fs_Walker *w, int e)
+static inline void
+fs_internal_posix_walker_set_sys_error(Fs_Walker *w,
+                                       int        e)
 {
     w->has_error = 1;
     fs_internal_set_error_if_none(&w->error, fs_internal_posix_map_errno(e));
 }
 #endif
 
-static void
+static inline void
 fs_internal_walker_set_oom_error(Fs_Walker *w)
 {
     w->has_error = 1;
@@ -676,7 +667,8 @@ fs_internal_walker_set_oom_error(Fs_Walker *w)
 
 // Grow frame stack if necessary to fit needed
 static inline int
-fs_internal_walker_ensure_cap(Fs_Walker *w, size_t needed)
+fs_internal_walker_ensure_cap(Fs_Walker *w,
+                              size_t     needed)
 {
     if (w->cap >= needed) return 1;
     size_t new_cap = w->cap ? w->cap * 2 : 8;
@@ -694,8 +686,9 @@ fs_internal_walker_ensure_cap(Fs_Walker *w, size_t needed)
 }
 
 // push a frame for a directory (may succeed without pushing if empty on Windows)
-static int
-fs_internal_walker_push_frame(Fs_Walker *w, const char *dir_path)
+static inline int
+fs_internal_walker_push_frame(Fs_Walker  *w,
+                              const char *dir_path)
 {
 #ifdef _WIN32
     size_t  len     = strlen(dir_path);
@@ -803,7 +796,7 @@ fs_internal_walker_cleanup(Fs_Walker *w)
     w->yielded_root = 0;
 }
 
-FSAPI const char *
+FSDEF const char *
 fs_strerror(Fs_Error err)
 {
     switch (err) {
@@ -819,20 +812,21 @@ fs_strerror(Fs_Error err)
     return "<unhandled error code>";
 }
 
-FSAPI void
-fs_set_logger(Fs_LogFn logger, void *user_data)
+FSDEF void
+fs_set_logger(Fs_LogFn  logger,
+              void     *user_data)
 {
-    fs_internal_global_log_fn = logger;
+    fs_internal_global_log_fn        = logger;
     fs_internal_global_log_user_data = user_data;
 }
 
-FSAPI void
+FSDEF void
 fs_set_log_mask(unsigned int mask)
 {
     fs_internal_global_log_mask = mask;
 }
 
-FSAPI const char *
+FSDEF const char *
 fs_log_level_to_str(unsigned int level)
 {
     switch (level) {
@@ -843,7 +837,7 @@ fs_log_level_to_str(unsigned int level)
     return "UNKNOWN";
 }
 
-FSAPI int
+FSDEF int
 fs_exists(const char *path)
 {
     if (!path) return 0;
@@ -856,7 +850,7 @@ fs_exists(const char *path)
     return err == FS_ERROR_NONE;
 }
 
-FSAPI int
+FSDEF int
 fs_is_file(const char *path)
 {
     if (!path) return 0;
@@ -869,7 +863,7 @@ fs_is_file(const char *path)
     return err == FS_ERROR_NONE && !fi.is_dir && !fi.is_symlink;
 }
 
-FSAPI int
+FSDEF int
 fs_is_dir(const char *path)
 {
     if (!path) return 0;
@@ -882,13 +876,13 @@ fs_is_dir(const char *path)
     return err == FS_ERROR_NONE && fi.is_dir && !fi.is_symlink;
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_read_file(const char *path,
              void      **data_out,
              size_t     *size_out)
 {
-    if (data_out) *data_out           = NULL;
-    if (size_out) *size_out           = 0;
+    if (data_out) *data_out = NULL;
+    if (size_out) *size_out = 0;
 
     if (!path || !data_out || !size_out) {
         fs_internal_log_error_path("read file", path, FS_ERROR_GENERIC);
@@ -915,8 +909,8 @@ fs_read_file(const char *path,
     size_t sz = (size_t)fi.size;
 
     // Always allocate at least 1 byte so *data_out is never NULL on success.
-    size_t alloc_size = (sz == 0) ? 1 : sz;
-    void *buf = FS_REALLOC(NULL, alloc_size);
+    size_t  alloc_size = (sz == 0) ? 1 : sz;
+    void   *buf        = FS_REALLOC(NULL, alloc_size);
     if (!buf) {
         fs_internal_log_error_path("read file", path, FS_ERROR_OUT_OF_MEMORY);
         return FS_ERROR_OUT_OF_MEMORY;
@@ -936,7 +930,7 @@ fs_read_file(const char *path,
     return FS_ERROR_NONE;
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_read_file_into(const char *path,
                   void       *buffer,
                   size_t      buf_size,
@@ -1044,7 +1038,7 @@ fs_read_file_into(const char *path,
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_write_file(const char *path,
               const void *data,
               size_t      size)
@@ -1071,7 +1065,7 @@ fs_write_file(const char *path,
         return mapped;
     }
 
-    const uint8_t *p        = (const uint8_t *)data;
+    const uint8_t *p         = (const uint8_t *)data;
     size_t         remaining = size;
 
     while (remaining > 0) {
@@ -1119,7 +1113,7 @@ fs_write_file(const char *path,
         return mapped;
     }
 
-    const uint8_t *p        = (const uint8_t *)data;
+    const uint8_t *p         = (const uint8_t *)data;
     size_t         remaining = size;
 
     while (remaining > 0) {
@@ -1154,7 +1148,7 @@ fs_write_file(const char *path,
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_move_file(const char *src,
              const char *dst,
              uint32_t    flags)
@@ -1245,7 +1239,7 @@ fs_move_file(const char *src,
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_copy_file(const char *src,
              const char *dst,
              uint32_t    flags)
@@ -1364,7 +1358,7 @@ copy_cleanup:
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_delete_file(const char *path)
 {
     if (!path) {
@@ -1390,14 +1384,14 @@ fs_delete_file(const char *path)
         return FS_ERROR_NONE;
     }
 
-    int e = errno;
+    int      e      = errno;
     Fs_Error mapped = fs_internal_posix_map_errno(e);
     fs_internal_log_error_path("delete file", path, mapped);
     return mapped;
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_crc32_file(const char *path,
               uint32_t   *crc_out)
 {
@@ -1428,18 +1422,16 @@ fs_crc32_file(const char *path,
     }
 
     Fs_Error result = FS_ERROR_NONE;
-    uint32_t crc = 0xFFFFFFFFu;
+    uint32_t crc    = 0xFFFFFFFFu;
 
 #ifdef _WIN32
-    HANDLE h = CreateFileA(
-        path,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-        NULL
-        );
+    HANDLE h = CreateFileA(path,
+                           GENERIC_READ,
+                           FILE_SHARE_READ,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                           NULL);
 
     if (h == INVALID_HANDLE_VALUE) {
         DWORD e = GetLastError();
@@ -1523,7 +1515,7 @@ fs_crc32_file(const char *path,
     return FS_ERROR_NONE;
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_make_directory(const char *path,
                   uint32_t    flags)
 {
@@ -1616,7 +1608,7 @@ fs_make_directory(const char *path,
 #endif
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_move_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags)
@@ -1629,8 +1621,8 @@ fs_move_tree(const char *src_dir,
     fs_internal_log_trace_path2("Moving directory tree", src_dir, dst_dir);
 
     // Make sure src_dir exists and is actually a directory.
-    Fs_FileInfo info = FS_INTERNAL_ZERO_INIT;
-    Fs_Error info_err = fs_get_file_info(src_dir, &info);
+    Fs_FileInfo info     = FS_INTERNAL_ZERO_INIT;
+    Fs_Error    info_err = fs_get_file_info(src_dir, &info);
     if (info_err != FS_ERROR_NONE) {
         return info_err;
     }
@@ -1657,7 +1649,7 @@ fs_move_tree(const char *src_dir,
     return FS_ERROR_NONE;
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_copy_tree(const char *src_dir,
              const char *dst_dir,
              uint32_t    flags)
@@ -1669,10 +1661,9 @@ fs_copy_tree(const char *src_dir,
 
     fs_internal_log_trace_path2("Copying directory tree", src_dir, dst_dir);
 
-    Fs_Error err;
     // Check that src_dir exists and is a directory
     Fs_FileInfo src_info = FS_INTERNAL_ZERO_INIT;
-    err = fs_get_file_info(src_dir, &src_info);
+    Fs_Error    err      = fs_get_file_info(src_dir, &src_info);
     if (err != FS_ERROR_NONE) {
         return err;
     }
@@ -1684,7 +1675,7 @@ fs_copy_tree(const char *src_dir,
 
     // Check / create dst_dir
     Fs_FileInfo dst_info = FS_INTERNAL_ZERO_INIT;
-    Fs_Error   dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
+    Fs_Error    dst_err  = fs_internal_fill_file_info(dst_dir, &dst_info);
 
     if (dst_err == FS_ERROR_NONE) {
         // Destination exists
@@ -1729,7 +1720,7 @@ fs_copy_tree(const char *src_dir,
 
     // Length of the root path, used to compute relative paths
     const char *root_path = w.root_info.path;
-    size_t root_len = root_path ? strlen(root_path) : 0;
+    size_t      root_len  = root_path ? strlen(root_path) : 0;
 
     Fs_Error result = FS_ERROR_NONE;
 
@@ -1795,8 +1786,8 @@ fs_copy_tree(const char *src_dir,
 }
 
 
-FSAPI Fs_Error
-fs_get_file_info(const char *path,
+FSDEF Fs_Error
+fs_get_file_info(const char  *path,
                  Fs_FileInfo *out)
 {
     if (!out) {
@@ -1831,7 +1822,7 @@ fs_get_file_info(const char *path,
     return FS_ERROR_NONE;
 }
 
-FSAPI void
+FSDEF void
 fs_file_info_free(Fs_FileInfo *f)
 {
     if (!f) return;
@@ -1839,7 +1830,7 @@ fs_file_info_free(Fs_FileInfo *f)
     memset(f, 0, sizeof *f);
 }
 
-FSAPI Fs_Error
+FSDEF Fs_Error
 fs_delete_tree(const char *root)
 {
     Fs_Error err = FS_ERROR_NONE;
@@ -1861,7 +1852,7 @@ fs_delete_tree(const char *root)
             // Delete symlink itself
 #ifdef _WIN32
             if (!DeleteFileA(fi->path)) {
-                DWORD last = GetLastError();
+                DWORD    last   = GetLastError();
                 Fs_Error mapped = fs_internal_win32_map_error(last);
                 fs_internal_set_error_if_none(&err, mapped);
                 fs_internal_log_error_path("delete file", fi->path, mapped);
@@ -1950,16 +1941,17 @@ fs_delete_tree(const char *root)
     return err;
 }
 
-FSAPI int
-fs_walker_init(Fs_Walker *w, const char *root)
+FSDEF int
+fs_walker_init(Fs_Walker  *w,
+               const char *root)
 {
     if (!w || !root) return 0;
     memset(w, 0, sizeof *w);
 
     fs_internal_log_trace_path("Walking directory", root);
 
-    Fs_FileInfo *ri = &w->root_info;
-    Fs_Error err = fs_internal_fill_file_info(root, ri);
+    Fs_FileInfo *ri  = &w->root_info;
+    Fs_Error     err = fs_internal_fill_file_info(root, ri);
     if (err != FS_ERROR_NONE) {
         w->has_error = 1;
         fs_internal_set_error_if_none(&w->error, err);
@@ -1990,7 +1982,7 @@ fs_walker_init(Fs_Walker *w, const char *root)
 }
 
 
-FSAPI Fs_FileInfo *
+FSDEF Fs_FileInfo *
 fs_walker_next(Fs_Walker *w)
 {
     if (!w)           return NULL;
@@ -2020,7 +2012,7 @@ fs_walker_next(Fs_Walker *w)
 
 #ifdef _WIN32
         Fs_WalkerFrameWin *frame = &w->frames[w->len - 1];
-        WIN32_FIND_DATAA *fd    = &frame->data;
+        WIN32_FIND_DATAA  *fd    = &frame->data;
 
         for (;;) {
             if (frame->first) {
@@ -2126,7 +2118,7 @@ fs_walker_next(Fs_Walker *w)
     }
 }
 
-FSAPI void
+FSDEF void
 fs_walker_free(Fs_Walker *w)
 {
     if (!w) return;
@@ -2218,7 +2210,7 @@ const char *fs_embedded_license_ptr = fs_embedded_license;
 
 #endif // FS_EMBED_LICENSE
 
-FSAPI const char *
+FSDEF const char *
 fs_license_text(void)
 {
 #ifdef FS_EMBED_LICENSE
